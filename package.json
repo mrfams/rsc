@@ -2,6 +2,9 @@
   "name": "rsc",
   "version": "1.0.0",
   "main": "expo-router/entry",
+  "engines": {
+    "node": "22.x"
+  },
   "allowScripts": {
     "esbuild": true,
     "@tailwindcss/oxide": true
