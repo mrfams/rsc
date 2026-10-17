@@ -1,0 +1,17 @@
+{
+  "buildCommand": "expo export -p web",
+  "outputDirectory": "dist/client",
+  "functions": {
+    "api/index.ts": {
+      "runtime": "@vercel/node@5.1.8",
+      "includeFiles": "dist/server/**",
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
+  ]
+}
