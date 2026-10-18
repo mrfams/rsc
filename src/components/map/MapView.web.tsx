@@ -6,7 +6,7 @@
  * - The root div sets `zIndex: 0`, which creates a stacking context. Without
  *   it, Leaflet's internal panes (z-index 400+) escape and cover the app's
  *   floating controls.
- * - Basemaps are keyless raster tiles: CARTO Voyager (Google-Maps-like
+ * - Basemaps are keyless raster tiles: Esri World Street Map (modern, clean
  *   street style) and Esri World Imagery (satellite).
  */
 import { useEffect, useRef } from 'react';
@@ -19,14 +19,16 @@ import type { MapViewProps } from './types';
 type LeafletModule = typeof import('leaflet');
 
 const TILE_URLS = {
+  // Keyless raster tiles. CARTO started requiring an API key, so the street
+  // basemap is Esri's World Street Map (still a clean, modern look).
   streets:
-    'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
   satellite:
     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
 };
 
 const ATTRIBUTIONS: Record<string, string> = {
-  streets: '&copy; OpenStreetMap contributors &copy; CARTO',
+  streets: 'Tiles &copy; Esri — Source: Esri, DeLorme, NAVTEQ, USGS',
   satellite: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
 };
 

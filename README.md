@@ -9,7 +9,7 @@ Better Auth and a Neon Postgres database, deployed on Vercel.
 | Area | Details |
 |---|---|
 | **Auth** | Email + password sign-up/sign-in restricted to campus emails (@emu.edu.tr by default), DB-backed sessions, sign-out — web **and** native (SecureStore cookie storage) |
-| **Map** | Web: Leaflet with Google-style CARTO Voyager tiles + satellite toggle; native: **MapLibre** (`@maplibre/maplibre-react-native`) with the keyless OpenFreeMap "Liberty" vector style + Esri satellite toggle; campus geofence polygon **and outside-campus dimming mask** on both platforms; category filter chips |
+| **Map** | Web: Leaflet with keyless Esri street/satellite tiles; native: **MapLibre** (`@maplibre/maplibre-react-native`) with the keyless OpenFreeMap "Liberty" vector style + Esri satellite toggle; campus geofence polygon **and outside-campus dimming mask** on both platforms; admin-managed category filter chips |
 | **Reports** | Tap-to-place map pin, category picker, note, optional photo (≤ ~450 KB), campus-polygon geofence enforced server-side |
 | **Bin lifecycle** | Reports within 25 m (per category) merge into the same bin; **verification waves** promote a bin to `verified` after sight by 2 distinct members; members can flag bins **missing** (disputed); a new independent sighting clears it again |
 | **Trust** | `/api/me` computes trust score (15 pts per distinct bin + 3 per report, capped 100) shown on the profile |
