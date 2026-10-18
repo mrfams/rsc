@@ -1,18 +1,52 @@
 /**
- * Native map: expo-maps (Apple Maps on iOS, Google Maps on Android).
- * expo-maps has no web support, which is why this file has no `.web` twin:
- * Metro loads MapView.web.tsx for web and this file for native.
+ * Native map: MapLibRE React Native (vector, keyless).
+ *
+ * v11 API notes:
+ * - `Map` + `Camera` (initialViewState; re-centered via key remount).
+ * - One generic `Layer` component with `type` (fill/line/…).
+ * - GeoJSON polygons support holes → the outside-campus dimming mask works
+ *   here just like the web Leaflet mask (expo-maps could not do this).
+ * - Markers are `Marker` annotations (native views) with an onPress.
  */
-import { AppleMaps, GoogleMaps } from 'expo-maps';
-import { Platform, StyleSheet } from 'react-native';
+import {
+  Camera,
+  GeoJSONSource,
+  Layer,
+  Map,
+  Marker,
+  UserLocation,
+} from '@maplibre/maplibre-react-native';
+import type { StyleSpecification, PressEvent } from '@maplibre/maplibre-react-native';
+import { useMemo } from 'react';
+import { StyleSheet, View } from 'react-native';
 
+import type { Feature, Polygon, Position } from 'geojson';
 import { CAMPUS_CENTER, COLORS } from '@/lib/constants';
 import type { MapViewProps } from './types';
 
 export type { MapViewProps };
 
-const GEOFENCE_FILL = 'rgba(14,116,144,0.12)';
-const GEOFENCE_LINE = COLORS.primary;
+const STREET_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
+
+const SATELLITE_STYLE: StyleSpecification = {
+  version: 8,
+  sources: {
+    esri: {
+      type: 'raster',
+      tiles: [
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      ],
+      tileSize: 256,
+      maxzoom: 19,
+      attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
+    },
+  },
+  layers: [{ id: 'esri-imagery', type: 'raster', source: 'esri' }],
+};
+
+function ringToGeoJSON(polygon: NonNullable<MapViewProps['polygon']>): Position[] {
+  return polygon.map((p): Position => [p.longitude, p.latitude]);
+}
 
 export default function MapView({
   markers,
@@ -22,87 +56,107 @@ export default function MapView({
   showUserLocation = true,
   basemap = 'streets',
   polygon,
+  maskOutside = false,
   style,
 }: MapViewProps) {
-  const cameraPosition = {
-    coordinates: { latitude: center.latitude, longitude: center.longitude },
-    zoom: 14,
-  };
+  const mapStyle = basemap === 'satellite' ? SATELLITE_STYLE : STREET_STYLE_URL;
 
-  const geofence = polygon?.length
-    ? [
-        {
-          id: 'campus-geofence',
-          coordinates: polygon.map((p) => ({
-            latitude: p.latitude,
-            longitude: p.longitude,
-          })),
-          color: GEOFENCE_FILL,
-          lineColor: GEOFENCE_LINE,
-          lineWidth: 2,
-        },
-      ]
-    : [];
+  // Campus + mask geometry. The mask is a world rectangle with the campus cut
+  // out — GeoJSON supports holes natively.
+  const campusGeoJSON = useMemo<Feature<Polygon> | null>(() => {
+    if (!polygon?.length) return null;
+    return {
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'Polygon',
+        coordinates: [ringToGeoJSON(polygon)],
+      },
+    };
+  }, [polygon]);
 
-  if (Platform.OS === 'android') {
-    return (
-      <GoogleMaps.View
-        style={[styles.container, style]}
-        cameraPosition={cameraPosition}
-        properties={{
-          isMyLocationEnabled: showUserLocation,
-          mapType:
-            basemap === 'satellite'
-              ? GoogleMaps.MapType.SATELLITE
-              : GoogleMaps.MapType.NORMAL,
-        }}
-        markers={markers.map((m) => ({
-          id: m.id,
-          coordinates: { latitude: m.latitude, longitude: m.longitude },
-          title: m.title ?? '',
-          tintColor: m.color ?? COLORS.primary,
-        }))}
-        polygons={geofence}
-        onMarkerClick={(event) => {
-          const id = event.id;
-          if (id) onPressMarker?.(id);
-        }}
-        onMapClick={(event) => {
-          const c = event.coordinates;
-          if (c?.latitude != null && c?.longitude != null) {
-            onPressMap?.(c.latitude, c.longitude);
-          }
-        }}
-      />
-    );
-  }
+  const maskGeoJSON = useMemo<Feature<Polygon> | null>(() => {
+    if (!polygon?.length || !maskOutside) return null;
+    const ring: Position[] = [
+      [-180, 85],
+      [180, 85],
+      [180, -85],
+      [-180, -85],
+      [-180, 85],
+    ];
+    return {
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'Polygon',
+        coordinates: [ring, ringToGeoJSON(polygon)],
+      },
+    };
+  }, [polygon, maskOutside]);
 
   return (
-    <AppleMaps.View
+    <Map
       style={[styles.container, style]}
-      cameraPosition={cameraPosition}
-      properties={{
-        isMyLocationEnabled: showUserLocation,
-        selectionEnabled: true,
-        mapType:
-          basemap === 'satellite'
-            ? AppleMaps.MapType.IMAGERY
-            : AppleMaps.MapType.STANDARD,
+      mapStyle={mapStyle}
+      onPress={(event) => {
+        const press = event as { nativeEvent: PressEvent };
+        const [lng, lat] = press.nativeEvent.lngLat;
+        onPressMap?.(lat, lng);
       }}
-      annotations={markers.map((m) => ({
-        id: m.id,
-        coordinates: { latitude: m.latitude, longitude: m.longitude },
-        title: m.title ?? '',
-        tintColor: m.color ?? COLORS.primary,
-      }))}
-      polygons={geofence}
-      onMapClick={(event) => {
-        const c = event.coordinates;
-        if (c?.latitude != null && c?.longitude != null) {
-          onPressMap?.(c.latitude, c.longitude);
-        }
-      }}
-    />
+    >
+      {/* initialViewState applies once; the key remounts recentre on updates */}
+      <Camera
+        key={`${center.longitude.toFixed(5)},${center.latitude.toFixed(5)}`}
+        initialViewState={{ center: [center.longitude, center.latitude], zoom: 14.5 }}
+      />
+
+      {maskGeoJSON ? (
+        <GeoJSONSource id="outside-mask" data={maskGeoJSON}>
+          <Layer
+            id="outside-mask-fill"
+            type="fill"
+            paint={{ 'fill-color': '#0F172A', 'fill-opacity': 0.35 }}
+          />
+        </GeoJSONSource>
+      ) : null}
+
+      {campusGeoJSON ? (
+        <GeoJSONSource id="campus-boundary" data={campusGeoJSON}>
+          <Layer
+            id="campus-boundary-fill"
+            type="fill"
+            paint={{ 'fill-color': '#0E7490', 'fill-opacity': 0.08 }}
+          />
+          <Layer
+            id="campus-boundary-line"
+            type="line"
+            paint={{ 'line-color': '#0E7490', 'line-width': 2, 'line-dasharray': [2, 2] }}
+          />
+        </GeoJSONSource>
+      ) : null}
+
+      {markers.map((marker) => (
+        <Marker
+          key={marker.id}
+          id={marker.id}
+          lngLat={[marker.longitude, marker.latitude]}
+          onPress={() => onPressMarker?.(marker.id)}
+        >
+          <View
+            style={{
+              width: 18,
+              height: 18,
+              borderRadius: 9,
+              backgroundColor: marker.color ?? COLORS.primary,
+              borderWidth: 2,
+              borderColor: '#FFFFFF',
+            }}
+          />
+        </Marker>
+      ))}
+
+      {showUserLocation ? <UserLocation /> : null}
+    </Map>
   );
 }
 

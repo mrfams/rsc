@@ -41,13 +41,7 @@
           "photosPermission": "Allow EMU Bin Tracker to add a photo of the bin you found."
         }
       ],
-      [
-        "expo-maps",
-        {
-          "requestLocationPermission": true,
-          "locationPermission": "Allow EMU Bin Tracker to use your location"
-        }
-      ]
+      "@maplibre/maplibre-react-native"
     ],
     "experiments": {
       "typedRoutes": true
