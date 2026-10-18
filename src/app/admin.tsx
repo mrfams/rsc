@@ -476,7 +476,7 @@ function poleCenter(markers: MapMarker[]) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  content: { flex: 1, padding: 20, gap: 10 },
+  content: { flex: 1, padding: 20, gap: 10, paddingBottom: 110 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { fontSize: 26, fontWeight: '800', color: COLORS.text },
   sectionTitle: { fontSize: 17, fontWeight: '700', color: COLORS.text },

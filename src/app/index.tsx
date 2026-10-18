@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import * as Location from 'expo-location';
 import {
@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import MapView from '@/components/map/MapView';
 import type { MapMarker } from '@/components/map/types';
+import { MenuButton } from '@/components/AppChrome';
 import { api } from '@/lib/api-client';
 import { CAMPUS_CENTER, COLORS } from '@/lib/constants';
 import { drainQueue, queueCount } from '@/lib/offline';
@@ -119,12 +120,7 @@ export default function MapScreen() {
 
       <SafeAreaView style={styles.topBar} pointerEvents="box-none">
         <View style={styles.topRow} pointerEvents="box-none">
-          <View style={styles.titleCard}>
-            <Text style={styles.title}>EMU Bin Tracker</Text>
-            <Text style={styles.subtitle}>
-              {isLoading ? 'Loading bins…' : `${markers.length} bins${categoryFilter === 'all' ? '' : ` · ${categoryFilter}`}`}
-            </Text>
-          </View>
+          <MenuButton />
           <View style={styles.layerToggle}>
             <Pressable
               onPress={() => setBasemap('streets')}
@@ -196,19 +192,6 @@ export default function MapScreen() {
             <Text style={styles.reconnectingText}>Reconnecting… tap to retry</Text>
           </Pressable>
         ) : null}
-
-        <View style={styles.bottomRow} pointerEvents="box-none">
-          <Link href="/profile" asChild>
-            <Pressable style={styles.ghostButton}>
-              <Text style={styles.ghostText}>Profile</Text>
-            </Pressable>
-          </Link>
-          <Link href="/report/new" asChild>
-            <Pressable style={styles.fab}>
-              <Text style={styles.fabText}>+ Report bin</Text>
-            </Pressable>
-          </Link>
-        </View>
       </View>
 
       {isLoading ? (
@@ -235,19 +218,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 10,
   },
-  titleCard: {
-    backgroundColor: 'rgba(255,255,255,0.94)',
-    borderRadius: 14,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
-  },
-  title: { fontSize: 17, fontWeight: '700', color: COLORS.text },
-  subtitle: { fontSize: 12, color: COLORS.textMuted, marginTop: 1 },
   layerToggle: {
     flexDirection: 'row',
     backgroundColor: 'rgba(255,255,255,0.94)',
@@ -279,7 +249,16 @@ const styles = StyleSheet.create({
   filterChipActive: { backgroundColor: COLORS.primary },
   filterChipText: { fontSize: 12, fontWeight: '600', color: COLORS.text, textTransform: 'capitalize' },
   filterChipTextActive: { color: '#fff' },
-  bottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 20, elevation: 20 },
+  bottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+    elevation: 20,
+    // Cleared above the phone/tablet bottom nav bar.
+    paddingBottom: 96,
+  },
   queueCard: {
     marginHorizontal: 16,
     marginBottom: 8,
@@ -306,36 +285,4 @@ const styles = StyleSheet.create({
   },
   pillSpinner: { marginRight: 2 },
   reconnectingText: { color: '#fff', fontSize: 12, fontWeight: '600' },
-  bottomRow: {
-    flexDirection: 'row',
-    gap: 12,
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingBottom: 18,
-    justifyContent: 'space-between',
-  },
-  ghostButton: {
-    backgroundColor: 'rgba(255,255,255,0.94)',
-    borderRadius: 999,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
-  },
-  ghostText: { color: COLORS.text, fontWeight: '600' },
-  fab: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 999,
-    paddingHorizontal: 22,
-    paddingVertical: 14,
-    shadowColor: COLORS.primary,
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
-  },
-  fabText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 });

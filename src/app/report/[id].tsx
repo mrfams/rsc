@@ -96,7 +96,7 @@ export default function ReportDetailScreen() {
 
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: COLORS.bg },
-  content: { padding: 20, gap: 16 },
+  content: { padding: 20, gap: 16, paddingBottom: 110 },
   center: {
     flex: 1,
     backgroundColor: COLORS.bg,

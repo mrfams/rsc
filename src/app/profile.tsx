@@ -147,7 +147,7 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   center: { alignItems: 'center', justifyContent: 'center' },
-  content: { flex: 1, padding: 20, gap: 14 },
+  content: { flex: 1, padding: 20, gap: 14, paddingBottom: 110 },
   title: { fontSize: 30, fontWeight: '800', color: COLORS.text },
   muted: { color: COLORS.textMuted, fontSize: 15 },
   authCard: {

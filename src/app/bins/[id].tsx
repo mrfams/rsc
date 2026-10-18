@@ -178,7 +178,7 @@ export default function BinDetailScreen() {
 
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: COLORS.bg },
-  content: { padding: 20, gap: 14, paddingBottom: 48 },
+  content: { padding: 20, gap: 14, paddingBottom: 110 },
   center: {
     flex: 1,
     backgroundColor: COLORS.bg,
