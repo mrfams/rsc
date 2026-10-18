@@ -2,7 +2,16 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import * as Location from 'expo-location';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  AppState,
+  FlatList,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import MapView from '@/components/map/MapView';
@@ -10,6 +19,7 @@ import type { MapMarker } from '@/components/map/types';
 import { api } from '@/lib/api-client';
 import type { BinCategory } from '@/lib/db/schema';
 import { CAMPUS_CENTER, CAMPUS_POLYGON, CATEGORY_COLORS, COLORS } from '@/lib/constants';
+import { drainQueue, queueCount } from '@/lib/offline';
 import type { BinDto } from '@/lib/report-service';
 import { BIN_CATEGORY_EMOJI } from '@/lib/validation';
 
@@ -18,7 +28,10 @@ export default function MapScreen() {
   const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [basemap, setBasemap] = useState<'streets' | 'satellite'>('streets');
   const [categoryFilter, setCategoryFilter] = useState<'all' | BinCategory>('all');
+  const [pending, setPending] = useState<number>(0);
 
+  // Drain the offline submission queue whenever connectivity comes back.
+  // (Defined after the refetch-bearing useQuery below; see drain effect.)
   useEffect(() => {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -33,6 +46,28 @@ export default function MapScreen() {
     queryFn: () => api<BinDto[]>('/api/bins'),
     refetchOnWindowFocus: true,
   });
+
+  useEffect(() => {
+    async function flushFromNetworkEvent() {
+      const sent = await drainQueue();
+      if (sent > 0) refetch();
+      setPending(await queueCount());
+    }
+    // Wake-ups on the web come as 'online'; on native, app foregrounding.
+    let cleanup: () => void = () => {};
+    if (Platform.OS === 'web') {
+      window.addEventListener('online', flushFromNetworkEvent);
+      cleanup = () => window.removeEventListener('online', flushFromNetworkEvent);
+    } else {
+      const sub = AppState.addEventListener('change', (state) => {
+        if (state === 'active') void flushFromNetworkEvent();
+      });
+      cleanup = () => sub.remove();
+    }
+    void queueCount().then(setPending);
+    return cleanup;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const markers: MapMarker[] = (data ?? [])
     .filter((bin) => categoryFilter === 'all' || bin.category === categoryFilter)
@@ -62,6 +97,7 @@ export default function MapScreen() {
         markers={markers}
         center={location ?? CAMPUS_CENTER}
         polygon={CAMPUS_POLYGON}
+        maskOutside
         basemap={basemap}
         onPressMarker={openMarker}
         style={styles.map}
@@ -128,6 +164,18 @@ export default function MapScreen() {
       </SafeAreaView>
 
       <View style={styles.bottomBar} pointerEvents="box-none">
+        {pending > 0 ? (
+          <Pressable style={styles.queueCard} onPress={async () => {
+            const sent = await drainQueue();
+            if (sent > 0) refetch();
+            setPending(await queueCount());
+          }}>
+            <Text style={styles.queueText}>
+              📬 {pending} report{pending === 1 ? '' : 's'} queued offline — tap to send now
+            </Text>
+          </Pressable>
+        ) : null}
+
         {error ? (
           <View style={styles.errorCard}>
             <Text style={styles.errorText}>Could not load bins. Is the server running?</Text>
@@ -220,6 +268,18 @@ const styles = StyleSheet.create({
   filterChipText: { fontSize: 12, fontWeight: '600', color: COLORS.text, textTransform: 'capitalize' },
   filterChipTextActive: { color: '#fff' },
   bottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 20, elevation: 20 },
+  queueCard: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    backgroundColor: 'rgba(255,255,255,0.94)',
+    borderColor: COLORS.primary,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    padding: 10,
+    alignItems: 'center',
+    elevation: 3,
+  },
+  queueText: { color: COLORS.primary, fontSize: 13, fontWeight: '600' },
   errorCard: {
     marginHorizontal: 16,
     marginBottom: 8,

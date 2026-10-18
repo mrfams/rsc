@@ -14,6 +14,8 @@ const pool = new Pool({
   console.log('deleted users:', users.rowCount);
   const reports = await pool.query('delete from reports');
   console.log('deleted reports:', reports.rowCount);
+  const tokens = await pool.query("delete from push_tokens where token like 'ExponentPushToken[flow%'");
+  console.log('deleted test push tokens:', tokens.rowCount);
   const bins = await pool.query('delete from bins');
   console.log('deleted bins:', bins.rowCount);
   await pool.end();

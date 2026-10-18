@@ -23,6 +23,7 @@ import { Field } from '@/components/ui/Field';
 import { api } from '@/lib/api-client';
 import { CAMPUS_CENTER, CAMPUS_POLYGON, CATEGORIES, COLORS } from '@/lib/constants';
 import { isInsideCampus } from '@/lib/geo';
+import { enqueueReport } from '@/lib/offline';
 import type { ReportInput } from '@/lib/validation';
 
 type PickedPhoto = { uri: string; base64: string };
@@ -106,7 +107,21 @@ export default function NewReportScreen() {
         { text: 'OK', onPress: () => router.replace('/') },
       ]);
     } catch (err) {
-      Alert.alert('Submit failed', err instanceof Error ? err.message : String(err));
+      const status = (err as { status?: number }).status;
+      if (status == null) {
+        // Network unreachable → queue it and let the map screen send it later.
+        const body: ReportInput = {
+          lat: pin.latitude,
+          lng: pin.longitude,
+          category,
+          note: note.trim() ? note.trim() : undefined,
+          photoBase64: photo?.base64,
+        };
+        await enqueueReport(body);
+        router.replace('/');
+      } else {
+        Alert.alert('Submit failed', err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setBusy(false);
     }

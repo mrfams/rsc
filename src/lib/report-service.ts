@@ -11,6 +11,7 @@ import path from 'node:path';
 import { db } from '@/lib/db';
 import { haversine, isInsideCampus } from '@/lib/geo';
 import { bins, reports, type BinCategory, type BinStatus } from '@/lib/db/schema';
+import { sendToUsers } from '@/lib/push';
 import type { ReportInput } from '@/lib/validation';
 
 /** Two reports within this distance become the same bin. */
@@ -231,6 +232,19 @@ export async function createReport(
 
   await refreshBinStatusFromWave(binId);
 
+  // Best-effort notifications to previous contributors about this sighting.
+  try {
+    const others = await binContributorIds(binId, user.id);
+    const categoryLabel = input.category;
+    await sendToUsers(others, {
+      title: 'Bin sighting 👀',
+      body: `Someone reported a ${categoryLabel} bin you also reported. Check it on the map!`,
+      data: { binId },
+    });
+  } catch {
+    // push is best-effort
+  }
+
   return {
     id: inserted.id,
     binId,
@@ -248,7 +262,7 @@ export async function createReport(
  * Verification wave: recount distinct contributors for the bin and set its
  * lifecycle status. A fresh independent sighting also clears a dispute.
  */
-async function refreshBinStatusFromWave(binId: string): Promise<void> {
+async function refreshBinStatusFromWave(binId: string): Promise<BinStatus> {
   const [row] = await db
     .select({ n: sql<number>`count(distinct ${reports.userId})` })
     .from(reports)
@@ -259,6 +273,17 @@ async function refreshBinStatusFromWave(binId: string): Promise<void> {
     .update(bins)
     .set({ status, updatedAt: new Date() })
     .where(eq(bins.id, binId));
+  return status;
+}
+
+/** Distinct contributor user ids for a bin, excluding one user. */
+async function binContributorIds(binId: string, excludeUserId?: string): Promise<string[]> {
+  const rows = await db
+    .select({ userId: reports.userId })
+    .from(reports)
+    .where(eq(reports.binId, binId))
+    .groupBy(reports.userId);
+  return rows.map((r) => r.userId).filter((id) => id !== excludeUserId);
 }
 
 export async function getReport(id: string): Promise<ReportDto | null> {
@@ -299,7 +324,21 @@ export async function disputeBin(binId: string): Promise<BinDto | null> {
     .set({ status: 'disputed', updatedAt: new Date() })
     .where(sql`${bins.id} = ${binId} and ${bins.status} <> 'removed'`)
     .returning(sqlBins);
-  return updated[0] ? mapBin(updated[0]) : null;
+
+  if (updated[0]) {
+    try {
+      const contributors = await binContributorIds(binId);
+      await sendToUsers(contributors, {
+        title: 'Bin reported missing ⚠️',
+        body: 'A bin you reported was flagged missing. A new sighting clears it.',
+        data: { binId },
+      });
+    } catch {
+      // push is best-effort
+    }
+    return mapBin(updated[0]);
+  }
+  return null;
 }
 
 /** Moderation: force any lifecycle status. Admin-only routes call this. */

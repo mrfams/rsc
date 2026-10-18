@@ -15,6 +15,8 @@ export type MapViewProps = {
   showUserLocation?: boolean;
   /** Campus boundary shading (geofence visualisation). */
   polygon?: { latitude: number; longitude: number }[];
+  /** Dim everything outside the polygon (web Leaflet mask). */
+  maskOutside?: boolean;
   /** Basemap style; honoured on web (Leaflet) and native (mapType). */
   basemap?: 'streets' | 'satellite';
   style?: object;

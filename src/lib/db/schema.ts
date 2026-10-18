@@ -90,7 +90,23 @@ export const reports = pgTable(
   ],
 );
 
+export const pushTokens = pgTable(
+  'push_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    /** Expo push token, e.g. ExponentPushToken[…] */
+    token: text('token').notNull().unique(),
+    platform: text('platform').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('push_tokens_user_idx').on(table.userId)],
+);
+
 export type Bin = typeof bins.$inferSelect;
 export type Report = typeof reports.$inferSelect;
+export type PushToken = typeof pushTokens.$inferSelect;
 export type BinCategory = (typeof binCategoryEnum.enumValues)[number];
 export type BinStatus = (typeof binStatusEnum.enumValues)[number];

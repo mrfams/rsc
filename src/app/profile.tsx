@@ -1,10 +1,13 @@
 import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
+import { useRouter } from 'expo-router';
+import { useEffect } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { api } from '@/lib/api-client';
+import { registerPushToken } from '@/lib/register-push';
+
 import { authClient, useSession } from '@/lib/auth-client';
 import { COLORS } from '@/lib/constants';
 import { BIN_CATEGORY_EMOJI } from '@/lib/validation';
@@ -26,6 +29,11 @@ type Me = {
 export default function ProfileScreen() {
   const router = useRouter();
   const { data: session, isPending } = useSession();
+
+  // Register push notifications for the signed-in member (native only).
+  useEffect(() => {
+    if (session?.user) void registerPushToken();
+  }, [session?.user]);
 
   const { data, refetch } = useQuery({
     queryKey: ['my-reports'],

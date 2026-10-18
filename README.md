@@ -105,7 +105,24 @@ Schema lives in `src/lib/db/schema.ts`; `npm run db:push` applies it.
 
 ## Known gaps (next phases per ROADMAP.md)
 
-- Native app store builds (EAS / `expo run:android`, Google Maps API key)
-- Offline queue + service-worker caching for the web PWA
-- Push notifications (Expo push service — needs the native build first)
 - Marker clustering on the map for very large datasets
+- Offline queue + service-worker caching for the web PWA (report queue done,
+  full map cache pending)
+- Dispute/photo similarity verification beyond the wave count
+
+## Native build (EAS + Google Maps key)
+
+1. `bunx eas-cli login` (free Expo account) → `bunx eas-cli init` (creates
+   `eas.json` and wires `extra.eas.projectId` into `app.json` — needed for
+   push tokens).
+2. Google Maps API key (Android): console.cloud.google.com → new project →
+   *"Maps SDK for Android"* → Enable → Credentials → API key. The free tier is
+   generous (about 20k map loads/month). Restrict the key to the Android app
+   (package name `com.<yourslug>.rsc`, SHA-1 shown by `eas credentials` or
+   `cd android && gradlew signingReport` in a prebuild).
+3. Put the key in `app.json → android.config.googleMaps.apiKey`.
+4. Build a development client: set `EXPO_PUBLIC_API_URL` to the server you
+   want the app to talk to, then `bunx eas-cli build --profile development
+   --platform android` (or `npx expo run:android` on a machine with the SDK).
+   Install the produced APK on a phone → sign in → push tokens register
+   automatically.

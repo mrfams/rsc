@@ -36,6 +36,7 @@ export default function WebMapView({
   onPressMarker,
   onPressMap,
   basemap = 'streets',
+  maskOutside = false,
   style,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -110,18 +111,34 @@ export default function WebMapView({
         detectRetina: true,
       }).addTo(map);
 
+      const campusRing: [number, number][] = CAMPUS_POLYGON.map((p) => [p.latitude, p.longitude]);
+
       // Campus geofence outline (non-interactive so clicks pass through).
-      L.polygon(
-        CAMPUS_POLYGON.map((p) => [p.latitude, p.longitude]),
-        {
-          color: '#0E7490',
-          weight: 2,
-          dashArray: '6 6',
-          fillColor: '#0E7490',
-          fillOpacity: 0.08,
+      L.polygon(campusRing, {
+        color: '#0E7490',
+        weight: 2,
+        dashArray: '6 6',
+        fillColor: '#0E7490',
+        fillOpacity: 0.08,
+        interactive: false,
+      }).addTo(map);
+
+      if (maskOutside) {
+        // Softly dim everything outside the campus: one polygon whose outer
+        // ring covers the world and whose second ring punches the campus hole.
+        const WORLD_RING: [number, number][] = [
+          [85, -180],
+          [85, 180],
+          [-85, 180],
+          [-85, -180],
+        ];
+        L.polygon([WORLD_RING, campusRing], {
+          stroke: false,
+          fillColor: '#0F172A',
+          fillOpacity: 0.35,
           interactive: false,
-        },
-      ).addTo(map);
+        }).addTo(map);
+      }
 
       map.on('click', (event) => {
         onPressMapRef.current?.(event.latlng.lat, event.latlng.lng);

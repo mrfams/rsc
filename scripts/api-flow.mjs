@@ -148,4 +148,20 @@ expect('admin-gate-403', adminGate.status === 403, adminGate);
 const binDetail = await req(`/api/bins/${binId}`);
 expect('bin-detail', binDetail.status === 200 && Array.isArray(binDetail.body?.reports), binDetail.body?.status);
 
+// --- Push registration: invalid tokens rejected, valid-shaped accepted ---
+const pushBad = await req('/api/push/register', {
+  method: 'POST',
+  body: JSON.stringify({ token: 'not-a-push-token', platform: 'android' }),
+});
+expect('push-register-invalid', pushBad.status === 400, pushBad.body);
+
+const pushOk = await req('/api/push/register', {
+  method: 'POST',
+  body: JSON.stringify({
+    token: `ExponentPushToken[flow-test-${Date.now()}]`,
+    platform: 'android',
+  }),
+});
+expect('push-register-valid', pushOk.status === 200 && pushOk.body?.registered === true, pushOk.body);
+
 console.log(steps.join('\n'));
