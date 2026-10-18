@@ -6,9 +6,6 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "android": {
-        "gradleTask": "assembleDebug"
-      },
       "ios": {
         "simulator": true
       },
