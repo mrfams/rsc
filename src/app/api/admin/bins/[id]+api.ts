@@ -1,4 +1,4 @@
-import { getSessionUser, isAdminEmail } from '@/lib/auth';
+import { getSessionUser, isAdminUser } from '@/lib/auth';
 import { setBinStatus } from '@/lib/report-service';
 import { binStatusSchema } from '@/lib/validation';
 
@@ -6,7 +6,7 @@ import { binStatusSchema } from '@/lib/validation';
 export async function PATCH(request: Request, { id }: { id: string }) {
   const user = await getSessionUser(request);
   if (!user) throw new Response('Unauthorized', { status: 401 });
-  if (!isAdminEmail(user.email)) throw new Response('Admins only', { status: 403 });
+  if (!isAdminUser(user)) throw new Response('Admins only', { status: 403 });
 
   const parsed = binStatusSchema.safeParse((await request.json())?.status);
   if (!parsed.success) {

@@ -1,4 +1,5 @@
 import {
+  boolean,
   doublePrecision,
   index,
   pgEnum,
@@ -7,22 +8,11 @@ import {
   timestamp,
   uuid,
 } from 'drizzle-orm/pg-core';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
 import { user } from './auth-schema';
 
 export { user, session, account, verification } from './auth-schema';
-
-/**
- * High-level waste category of a bin.
- */
-export const binCategoryEnum = pgEnum('bin_category', [
-  'plastic',
-  'paper',
-  'glass',
-  'metal',
-  'battery',
-  'general',
-]);
 
 /**
  * Lifecycle of a bin:
@@ -39,6 +29,20 @@ export const binStatusEnum = pgEnum('bin_status', [
 ]);
 
 /**
+ * Waste categories are admin-managed rows now (add "food waste", deactivate
+ * one, recolour it…). `bins.category` stores the category **slug** as plain
+ * text so deactivating a category never breaks historical bins.
+ */
+export const categories = pgTable('categories', {
+  slug: text('slug').primaryKey(),
+  name: text('name').notNull(),
+  color: text('color').notNull(),
+  emoji: text('emoji').notNull().default('♻️'),
+  active: boolean('active').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * A physical recycling bin on campus. Created lazily: the first report within
  * ~25 m of an unused location spawns a bin; later reports link to it.
  */
@@ -46,7 +50,8 @@ export const bins = pgTable(
   'bins',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    category: binCategoryEnum('category').notNull(),
+    /** FK → categories.slug (validated at write time; no cascade so history is safe). */
+    category: text('category').notNull().references((): AnyPgColumn => categories.slug),
     lat: doublePrecision('lat').notNull(),
     lng: doublePrecision('lng').notNull(),
     area: text('area'),
@@ -105,8 +110,20 @@ export const pushTokens = pgTable(
   (table) => [index('push_tokens_user_idx').on(table.userId)],
 );
 
+/**
+ * Kitchen-sink key/value store for server-editable settings.
+ * Key `campus_polygon` holds the geofence polygon the admin can re-draw.
+ */
+export const appConfig = pgTable('app_config', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(), // JSON-encoded payload
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type Bin = typeof bins.$inferSelect;
 export type Report = typeof reports.$inferSelect;
 export type PushToken = typeof pushTokens.$inferSelect;
-export type BinCategory = (typeof binCategoryEnum.enumValues)[number];
+/** Category is always a category slug (validated against the DB on write). */
+export type BinCategory = string;
+export type CategoryRow = typeof categories.$inferSelect;
 export type BinStatus = (typeof binStatusEnum.enumValues)[number];

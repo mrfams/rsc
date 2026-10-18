@@ -10,14 +10,14 @@ import { registerPushToken } from '@/lib/register-push';
 
 import { authClient, useSession } from '@/lib/auth-client';
 import { COLORS } from '@/lib/constants';
-import { BIN_CATEGORY_EMOJI } from '@/lib/validation';
+import { categoryEmoji } from '@/lib/validation';
 
 type MyReport = {
   id: string;
   note: string | null;
   photoUrl: string | null;
   createdAt: string;
-  bin: { category: keyof typeof BIN_CATEGORY_EMOJI };
+  bin: { category: string };
 };
 
 type Me = {
@@ -123,7 +123,7 @@ export default function ProfileScreen() {
                 <Image source={{ uri: item.photoUrl }} style={styles.thumb} contentFit="cover" />
               ) : (
                 <View style={[styles.thumb, styles.thumbEmpty]}>
-                  <Text style={styles.thumbEmoji}>{BIN_CATEGORY_EMOJI[item.bin.category]}</Text>
+                  <Text style={styles.thumbEmoji}>{categoryEmoji(item.bin.category)}</Text>
                 </View>
               )}
               <View style={{ flexShrink: 1 }}>

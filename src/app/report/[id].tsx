@@ -5,7 +5,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 
 import { api } from '@/lib/api-client';
 import { COLORS } from '@/lib/constants';
-import { BIN_CATEGORY_EMOJI, BIN_STATUS_LABEL } from '@/lib/validation';
+import { categoryEmoji, BIN_STATUS_LABEL } from '@/lib/validation';
 
 type ReportDetail = {
   id: string;
@@ -17,7 +17,7 @@ type ReportDetail = {
   createdAt: string;
   bin: {
     id: string;
-    category: keyof typeof BIN_CATEGORY_EMOJI;
+    category: string;
     status: keyof typeof BIN_STATUS_LABEL;
     reportCount: number;
   };
@@ -61,7 +61,7 @@ export default function ReportDetailScreen() {
       </Pressable>
 
       <Text style={styles.title}>
-        {BIN_CATEGORY_EMOJI[data.bin.category]} {data.bin.category} bin
+        {categoryEmoji(data.bin.category)} {data.bin.category} bin
       </Text>
       <Text style={styles.subtitle}>
         {BIN_STATUS_LABEL[data.bin.status]} · {date.toLocaleString()}

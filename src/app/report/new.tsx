@@ -1,7 +1,7 @@
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -21,10 +21,15 @@ import MapView from '@/components/map/MapView';
 import type { MapMarker } from '@/components/map/types';
 import { Field } from '@/components/ui/Field';
 import { api } from '@/lib/api-client';
-import { CAMPUS_CENTER, CAMPUS_POLYGON, CATEGORIES, COLORS } from '@/lib/constants';
+import { CAMPUS_CENTER, CAMPUS_POLYGON, COLORS } from '@/lib/constants';
 import { isInsideCampus } from '@/lib/geo';
 import { enqueueReport } from '@/lib/offline';
 import type { ReportInput } from '@/lib/validation';
+
+type AppConfigDto = {
+  campusPolygon: { latitude: number; longitude: number }[];
+  categories: { slug: string; name: string; emoji: string; color: string; active: boolean }[];
+};
 
 type PickedPhoto = { uri: string; base64: string };
 
@@ -32,12 +37,24 @@ export default function NewReportScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  const [category, setCategory] = useState<(typeof CATEGORIES)[number]>('plastic');
+  const { data: config } = useQuery({
+    queryKey: ['config'],
+    queryFn: () => api<AppConfigDto>('/api/config'),
+  });
+  const categories: AppConfigDto['categories'] = config?.categories ?? [];
+  const campusPolygon =
+    !config || config.campusPolygon.length === 0 ? CAMPUS_POLYGON : config.campusPolygon;
+
+  const [category, setCategory] = useState<string>('');
   const [note, setNote] = useState('');
   const [pin, setPin] = useState<{ latitude: number; longitude: number } | null>(null);
   const [photo, setPhoto] = useState<PickedPhoto | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadingLocation, setLoadingLocation] = useState(true);
+
+  // The chip the user tapped, defaulting to the first available category as
+  // soon as the catalogue arrives (no state-sync effect needed).
+  const selectedCategory = category || categories[0]?.slug || '';
 
   useEffect(() => {
     (async () => {
@@ -87,7 +104,11 @@ export default function NewReportScreen() {
       Alert.alert('Location required', 'Tap the map to place the bin.');
       return;
     }
-    if (!isInsideCampus(pin.latitude, pin.longitude)) {
+    if (!selectedCategory) {
+      Alert.alert('Just a second', 'Pick a category once the list loads.');
+      return;
+    }
+    if (!isInsideCampus(pin.latitude, pin.longitude, campusPolygon)) {
       Alert.alert('Outside campus', 'Place the pin inside the highlighted campus boundary.');
       return;
     }
@@ -96,7 +117,7 @@ export default function NewReportScreen() {
       const body: ReportInput = {
         lat: pin.latitude,
         lng: pin.longitude,
-        category,
+        category: selectedCategory,
         note: note.trim() ? note.trim() : undefined,
         photoBase64: photo?.base64,
       };
@@ -113,7 +134,7 @@ export default function NewReportScreen() {
         const body: ReportInput = {
           lat: pin.latitude,
           lng: pin.longitude,
-          category,
+          category: selectedCategory,
           note: note.trim() ? note.trim() : undefined,
           photoBase64: photo?.base64,
         };
@@ -128,7 +149,6 @@ export default function NewReportScreen() {
   }
 
   const markers: MapMarker[] = pin ? [{ id: 'pin', ...pin, title: 'Report location' }] : [];
-
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -142,7 +162,7 @@ export default function NewReportScreen() {
           <MapView
             markers={markers}
             center={pin ?? CAMPUS_CENTER}
-            polygon={CAMPUS_POLYGON}
+            polygon={campusPolygon}
             showUserLocation
             onPressMap={(lat, lng) => setPin({ latitude: lat, longitude: lng })}
             style={styles.map}
@@ -150,7 +170,7 @@ export default function NewReportScreen() {
           <Text style={styles.mapHint}>
             {loadingLocation
               ? 'Locating you…'
-              : pin && !isInsideCampus(pin.latitude, pin.longitude)
+              : pin && isInsideCampus(pin.latitude, pin.longitude, campusPolygon) === false
                 ? '⚠️ Pin is outside the campus boundary.'
                 : pin
                   ? 'Tap the map to fine-tune, then submit.'
@@ -160,13 +180,15 @@ export default function NewReportScreen() {
 
         <Text style={styles.label}>Category</Text>
         <View style={styles.chips}>
-          {CATEGORIES.map((c) => (
+          {categories.map((c) => (
             <Pressable
-              key={c}
-              onPress={() => setCategory(c)}
-              style={[styles.chip, category === c && styles.chipActive]}
+              key={c.slug}
+              onPress={() => setCategory(c.slug)}
+              style={[styles.chip, selectedCategory === c.slug && styles.chipActive]}
             >
-              <Text style={[styles.chipText, category === c && styles.chipTextActive]}>{c}</Text>
+              <Text style={[styles.chipText, selectedCategory === c.slug && styles.chipTextActive]}>
+                {c.emoji} {c.name}
+              </Text>
             </Pressable>
           ))}
         </View>

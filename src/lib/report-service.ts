@@ -10,6 +10,8 @@ import path from 'node:path';
 
 import { db } from '@/lib/db';
 import { haversine, isInsideCampus } from '@/lib/geo';
+import { isReportableCategory } from '@/lib/categories';
+import { getCampusPolygon } from '@/lib/campus-config';
 import { bins, reports, type BinCategory, type BinStatus } from '@/lib/db/schema';
 import { sendToUsers } from '@/lib/push';
 import type { ReportInput } from '@/lib/validation';
@@ -190,10 +192,14 @@ export async function createReport(
   user: { id: string; email: string },
   input: ReportInput,
 ): Promise<ReportDto> {
-  if (!isInsideCampus(input.lat, input.lng)) {
+  const [campusPolygon] = await Promise.all([getCampusPolygon()]);
+  if (!isInsideCampus(input.lat, input.lng, campusPolygon)) {
     throw new Response('Bins must be inside the highlighted campus boundary', {
       status: 422,
     });
+  }
+  if (!(await isReportableCategory(input.category))) {
+    throw new Response('Unknown or inactive category', { status: 422 });
   }
 
   const photoPath = input.photoBase64 ? await storePhoto(input.photoBase64) : null;

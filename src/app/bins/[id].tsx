@@ -5,7 +5,7 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View
 
 import { api } from '@/lib/api-client';
 import { COLORS } from '@/lib/constants';
-import { BIN_CATEGORY_EMOJI, BIN_STATUS_LABEL, binStatusEnum, type BinStatus } from '@/lib/validation';
+import { categoryEmoji, BIN_STATUS_LABEL, binStatusEnum, type BinStatus } from '@/lib/validation';
 import type { BinDetailDto } from '@/lib/report-service';
 
 export default function BinDetailScreen() {
@@ -96,7 +96,7 @@ export default function BinDetailScreen() {
       </Pressable>
 
       <Text style={styles.title}>
-        {BIN_CATEGORY_EMOJI[data.category]} {data.category} bin
+        {categoryEmoji(data.category)} {data.category} bin
       </Text>
 
       <View style={styles.statusPill}>
@@ -116,7 +116,7 @@ export default function BinDetailScreen() {
               <Image source={{ uri: report.photoUrl }} style={styles.thumb} contentFit="cover" />
             ) : (
               <View style={[styles.thumb, styles.thumbEmpty]}>
-                <Text style={styles.thumbEmoji}>{BIN_CATEGORY_EMOJI[data.category]}</Text>
+                <Text style={styles.thumbEmoji}>{categoryEmoji(data.category)}</Text>
               </View>
             )}
             <View style={{ flexShrink: 1, flex: 1 }}>

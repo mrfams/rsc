@@ -17,17 +17,20 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView from '@/components/map/MapView';
 import type { MapMarker } from '@/components/map/types';
 import { api } from '@/lib/api-client';
-import type { BinCategory } from '@/lib/db/schema';
-import { CAMPUS_CENTER, CAMPUS_POLYGON, CATEGORY_COLORS, COLORS } from '@/lib/constants';
+import { CAMPUS_CENTER, COLORS } from '@/lib/constants';
 import { drainQueue, queueCount } from '@/lib/offline';
 import type { BinDto } from '@/lib/report-service';
-import { BIN_CATEGORY_EMOJI } from '@/lib/validation';
+
+type AppConfigDto = {
+  campusPolygon: { latitude: number; longitude: number }[];
+  categories: { slug: string; name: string; emoji: string; color: string; active: boolean }[];
+};
 
 export default function MapScreen() {
   const router = useRouter();
   const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [basemap, setBasemap] = useState<'streets' | 'satellite'>('streets');
-  const [categoryFilter, setCategoryFilter] = useState<'all' | BinCategory>('all');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | string>('all');
   const [pending, setPending] = useState<number>(0);
 
   // Drain the offline submission queue whenever connectivity comes back.
@@ -41,11 +44,25 @@ export default function MapScreen() {
     })();
   }, []);
 
-  const { data, isLoading, error, refetch, isFetching } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['bins'],
     queryFn: () => api<BinDto[]>('/api/bins'),
     refetchOnWindowFocus: true,
+    // Quiet self-healing: automatic retries with backoff. The UI shows a small
+    // "Reconnecting…" pill instead of a scary error banner.
+    retry: (count, err) => ((err as { status?: number }).status === 403 ? false : count < 5),
+    retryDelay: (attempt) => Math.min(30_000, 2000 * 2 ** attempt),
   });
+
+  // Geofence + category chips come from the (admin-editable) server config.
+  const { data: config } = useQuery({
+    queryKey: ['config'],
+    queryFn: () => api<AppConfigDto>('/api/config'),
+    refetchOnWindowFocus: true,
+  });
+  const categories = config?.categories ?? [];
+  const categoryColor = (slug: string) =>
+    categories.find((c) => c.slug === slug)?.color ?? COLORS.primary;
 
   useEffect(() => {
     async function flushFromNetworkEvent() {
@@ -76,19 +93,16 @@ export default function MapScreen() {
       latitude: bin.lat,
       longitude: bin.lng,
       title: `${bin.category} bin · ${bin.status}`,
-      color: CATEGORY_COLORS[bin.category],
+      color: categoryColor(bin.category),
     }));
 
   function openMarker(id: string) {
     router.push(`/bins/${id}`);
   }
 
-  const filterOptions: { key: 'all' | BinCategory; label: string }[] = [
+  const filterOptions: { key: 'all' | string; label: string }[] = [
     { key: 'all', label: 'All' },
-    ...(Object.keys(BIN_CATEGORY_EMOJI) as BinCategory[]).map((key) => ({
-      key,
-      label: `${BIN_CATEGORY_EMOJI[key]} ${key}`,
-    })),
+    ...categories.map((c) => ({ key: c.slug, label: `${c.emoji} ${c.name}` })),
   ];
 
   return (
@@ -96,7 +110,7 @@ export default function MapScreen() {
       <MapView
         markers={markers}
         center={location ?? CAMPUS_CENTER}
-        polygon={CAMPUS_POLYGON}
+        polygon={config && config.campusPolygon.length > 0 ? config.campusPolygon : undefined}
         maskOutside
         basemap={basemap}
         onPressMarker={openMarker}
@@ -177,12 +191,10 @@ export default function MapScreen() {
         ) : null}
 
         {error ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorText}>Could not load bins. Is the server running?</Text>
-            <Pressable onPress={() => refetch()} style={styles.retryButton}>
-              <Text style={styles.retryText}>{isFetching ? '…' : 'Retry'}</Text>
-            </Pressable>
-          </View>
+          <Pressable style={styles.reconnectingPill} onPress={() => refetch()}>
+            <ActivityIndicator size="small" color="#FFFFFF" style={styles.pillSpinner} />
+            <Text style={styles.reconnectingText}>Reconnecting… tap to retry</Text>
+          </Pressable>
         ) : null}
 
         <View style={styles.bottomRow} pointerEvents="box-none">
@@ -280,21 +292,20 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   queueText: { color: COLORS.primary, fontSize: 13, fontWeight: '600' },
-  errorCard: {
+  reconnectingPill: {
     marginHorizontal: 16,
     marginBottom: 8,
-    backgroundColor: '#FEF2F2',
-    borderColor: COLORS.danger,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 12,
-    padding: 10,
+    alignSelf: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 999,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 6,
+    backgroundColor: 'rgba(22,25,28,0.85)',
   },
-  errorText: { color: COLORS.danger, flexShrink: 1, fontSize: 13 },
-  retryButton: { marginLeft: 10 },
-  retryText: { color: COLORS.danger, fontWeight: '700' },
+  pillSpinner: { marginRight: 2 },
+  reconnectingText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   bottomRow: {
     flexDirection: 'row',
     gap: 12,

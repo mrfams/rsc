@@ -66,6 +66,7 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint",
+    "seed": "tsx scripts/seed.ts",
     "db:push": "drizzle-kit push",
     "deploy": "vercel deploy --prebuilt"
   },

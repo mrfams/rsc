@@ -11,7 +11,8 @@ const dev = process.env.NODE_ENV !== 'production';
 
 /**
  * Campus email gate (verification wave #0): only sign-ups from these domains
- * are accepted. Comma-separated; default is EMU mail.
+ * are accepted. Comma-separated; default is EMU mail. Emails listed in
+ * ADMIN_EMAILS (seeded staff accounts) are exempt.
  */
 const ALLOWED_EMAIL_DOMAINS = (process.env.ALLOWED_EMAIL_DOMAINS ?? 'emu.edu.tr')
   .split(',')
@@ -28,6 +29,15 @@ export function isAdminEmail(email: string | null | undefined): boolean {
   return list.includes(email.toLowerCase());
 }
 
+/**
+ * Admin powers come from two places: the `role` column (an admin can promote
+ * others from /admin) and the ADMIN_EMAILS env bootstrap list. Either passes.
+ */
+export function isAdminUser(user: { email: string; role?: string | null } | null): boolean {
+  if (!user) return false;
+  return user.role === 'admin' || isAdminEmail(user.email);
+}
+
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
     provider: 'pg',
@@ -42,13 +52,20 @@ export const auth = betterAuth({
       create: {
         before: async (created) => {
           const email = created.email?.toLowerCase() ?? '';
+          const isStaffEmail = isAdminEmail(email);
           const at = email.lastIndexOf('@');
           const domain = at >= 0 ? email.slice(at + 1) : '';
-          if (ALLOWED_EMAIL_DOMAINS.length > 0 && !ALLOWED_EMAIL_DOMAINS.includes(domain)) {
+          if (
+            ALLOWED_EMAIL_DOMAINS.length > 0 &&
+            !isStaffEmail &&
+            !ALLOWED_EMAIL_DOMAINS.includes(domain)
+          ) {
             throw new APIError('BAD_REQUEST', {
               message: `Sign-up needs a campus email (${ALLOWED_EMAIL_DOMAINS.join(', ')})`,
             });
           }
+          // Staff accounts bootstrap straight into the admin role.
+          if (isStaffEmail) (created as { role?: string }).role = 'admin';
         },
       },
     },

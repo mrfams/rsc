@@ -33,7 +33,11 @@ export function pointInPolygon(lat: number, lng: number, polygon: GeoPoint[]): b
   return inside;
 }
 
-/** Is a point inside the reportable EMU campus polygon? */
-export function isInsideCampus(lat: number, lng: number): boolean {
-  return pointInPolygon(lat, lng, CAMPUS_POLYGON);
+/** Is a point inside a campus polygon (defaults to the built-in boundary)? */
+export function isInsideCampus(
+  lat: number,
+  lng: number,
+  polygon: GeoPoint[] = CAMPUS_POLYGON,
+): boolean {
+  return pointInPolygon(lat, lng, polygon);
 }
