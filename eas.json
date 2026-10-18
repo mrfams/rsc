@@ -10,19 +10,19 @@
         "simulator": true
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://rsc-mrfams-projects.vercel.app"
+        "EXPO_PUBLIC_API_URL": "https://emu-bin-tracker.vercel.app"
       }
     },
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://rsc-mrfams-projects.vercel.app"
+        "EXPO_PUBLIC_API_URL": "https://emu-bin-tracker.vercel.app"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://rsc-mrfams-projects.vercel.app"
+        "EXPO_PUBLIC_API_URL": "https://emu-bin-tracker.vercel.app"
       }
     }
   },
