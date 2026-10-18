@@ -1,18 +1,20 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useRouter } from 'expo-router';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useEffect, useState } from 'react';
 import * as Location from 'expo-location';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import MapView, { type MapMarker } from '@/components/map/MapView';
+import MapView from '@/components/map/MapView';
+import type { MapMarker } from '@/components/map/types';
 import { api } from '@/lib/api-client';
-import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
+import { CAMPUS_CENTER, CAMPUS_POLYGON, CATEGORY_COLORS, COLORS } from '@/lib/constants';
 import type { BinDto } from '@/lib/report-service';
 
 export default function MapScreen() {
   const router = useRouter();
   const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [basemap, setBasemap] = useState<'streets' | 'satellite'>('streets');
 
   useEffect(() => {
     (async () => {
@@ -46,7 +48,9 @@ export default function MapScreen() {
     <View style={styles.container}>
       <MapView
         markers={markers}
-        center={location ?? undefined}
+        center={location ?? CAMPUS_CENTER}
+        polygon={CAMPUS_POLYGON}
+        basemap={basemap}
         onPressMarker={openMarker}
         style={styles.map}
       />
@@ -56,8 +60,28 @@ export default function MapScreen() {
           <View style={styles.titleCard}>
             <Text style={styles.title}>EMU Bin Tracker</Text>
             <Text style={styles.subtitle}>
-              {isLoading ? 'Loading bins…' : `${data?.length ?? 0} bins on campus`}
+              {isLoading ? 'Loading bins…' : `${data?.length ?? 0} bins in the campus zone`}
             </Text>
+          </View>
+          <View style={styles.layerToggle}>
+            <Pressable
+              onPress={() => setBasemap('streets')}
+              style={[styles.layerChip, basemap === 'streets' && styles.layerChipActive]}
+            >
+              <Text style={[styles.layerText, basemap === 'streets' && styles.layerTextActive]}>
+                Map
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setBasemap('satellite')}
+              style={[styles.layerChip, basemap === 'satellite' && styles.layerChipActive]}
+            >
+              <Text
+                style={[styles.layerText, basemap === 'satellite' && styles.layerTextActive]}
+              >
+                Satellite
+              </Text>
+            </Pressable>
           </View>
         </View>
       </SafeAreaView>
@@ -98,15 +122,23 @@ export default function MapScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
   map: { flex: 1 },
-  loading: { position: 'absolute', top: 120, alignSelf: 'center' },
-  topBar: { position: 'absolute', top: 0, left: 0, right: 0 },
-  topRow: { paddingHorizontal: 16, paddingVertical: 8 },
+  loading: { position: 'absolute', top: 120, alignSelf: 'center', zIndex: 30 },
+  // Overlays sit above the map: explicit z-index/elevation so the map can
+  // never paint over the controls (Leaflet panes use z-index up to 800 on web).
+  topBar: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 20, elevation: 20 },
+  topRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
   titleCard: {
     backgroundColor: 'rgba(255,255,255,0.94)',
     borderRadius: 14,
     paddingVertical: 8,
     paddingHorizontal: 14,
-    alignSelf: 'flex-start',
     shadowColor: '#000',
     shadowOpacity: 0.08,
     shadowRadius: 8,
@@ -115,7 +147,22 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 17, fontWeight: '700', color: COLORS.text },
   subtitle: { fontSize: 12, color: COLORS.textMuted, marginTop: 1 },
-  bottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0 },
+  layerToggle: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.94)',
+    borderRadius: 999,
+    padding: 3,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  layerChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
+  layerChipActive: { backgroundColor: COLORS.primary },
+  layerText: { fontSize: 12, fontWeight: '600', color: COLORS.text },
+  layerTextActive: { color: '#fff' },
+  bottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 20, elevation: 20 },
   errorCard: {
     marginHorizontal: 16,
     marginBottom: 8,

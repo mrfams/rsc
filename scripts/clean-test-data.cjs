@@ -9,7 +9,7 @@ const pool = new Pool({
 (async () => {
   const users = await pool.query(
     // Keep only real sign-ups; drop the automated flow-test accounts.
-    `delete from "user" where email similar to '(flow|photo|fix|test%)(.*)@emu.edu.tr'`,
+    `delete from "user" where email like 'flow%' or email like 'photo%' or email like 'fix%' or email like 'test%'`,
   );
   console.log('deleted users:', users.rowCount);
   const reports = await pool.query('delete from reports');

@@ -13,5 +13,9 @@ export type MapViewProps = {
   onPressMarker?: (id: string) => void;
   onPressMap?: (latitude: number, longitude: number) => void;
   showUserLocation?: boolean;
+  /** Campus boundary shading (geofence visualisation). */
+  polygon?: { latitude: number; longitude: number }[];
+  /** Basemap style; honoured on web (Leaflet) and native (mapType). */
+  basemap?: 'streets' | 'satellite';
   style?: object;
 };

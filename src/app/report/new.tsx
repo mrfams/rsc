@@ -17,10 +17,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 
-import MapView, { type MapMarker } from '@/components/map/MapView';
+import MapView from '@/components/map/MapView';
+import type { MapMarker } from '@/components/map/types';
 import { Field } from '@/components/ui/Field';
 import { api } from '@/lib/api-client';
-import { CAMPUS_CENTER, CATEGORIES, COLORS } from '@/lib/constants';
+import { CAMPUS_CENTER, CAMPUS_POLYGON, CATEGORIES, COLORS } from '@/lib/constants';
+import { isInsideCampus } from '@/lib/geo';
 import type { ReportInput } from '@/lib/validation';
 
 type PickedPhoto = { uri: string; base64: string };
@@ -84,6 +86,10 @@ export default function NewReportScreen() {
       Alert.alert('Location required', 'Tap the map to place the bin.');
       return;
     }
+    if (!isInsideCampus(pin.latitude, pin.longitude)) {
+      Alert.alert('Outside campus', 'Place the pin inside the highlighted campus boundary.');
+      return;
+    }
     setBusy(true);
     try {
       const body: ReportInput = {
@@ -121,6 +127,7 @@ export default function NewReportScreen() {
           <MapView
             markers={markers}
             center={pin ?? CAMPUS_CENTER}
+            polygon={CAMPUS_POLYGON}
             showUserLocation
             onPressMap={(lat, lng) => setPin({ latitude: lat, longitude: lng })}
             style={styles.map}
@@ -128,9 +135,11 @@ export default function NewReportScreen() {
           <Text style={styles.mapHint}>
             {loadingLocation
               ? 'Locating you…'
-              : pin
-                ? 'Tap the map to fine-tune, then submit.'
-                : 'Tap the map to place the bin.'}
+              : pin && !isInsideCampus(pin.latitude, pin.longitude)
+                ? '⚠️ Pin is outside the campus boundary.'
+                : pin
+                  ? 'Tap the map to fine-tune, then submit.'
+                  : 'Tap the map to place the bin inside the boundary.'}
           </Text>
         </View>
 

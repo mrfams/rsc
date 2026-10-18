@@ -35,4 +35,18 @@ export const CATEGORIES = [
 
 /** EMU, Famagusta — default map centre. */
 export const CAMPUS_CENTER = { latitude: 35.3786, longitude: 33.9422 };
-export const CAMPUS_DELTA = 0.01;
+
+/**
+ * Reportable area — a rough polygon around the EMU main campus (incl. dorm
+ * side). Coordinates are hand-tuned; refine edges against a real campus map
+ * whenever needed. Server-side validation uses this exact polygon.
+ */
+export const CAMPUS_POLYGON: { latitude: number; longitude: number }[] = [
+  { latitude: 35.382, longitude: 33.934 },
+  { latitude: 35.3826, longitude: 33.9444 },
+  { latitude: 35.379, longitude: 33.9466 },
+  { latitude: 35.3746, longitude: 33.9484 },
+  { latitude: 35.3708, longitude: 33.9456 },
+  { latitude: 35.369, longitude: 33.9376 },
+  { latitude: 35.3734, longitude: 33.9322 },
+];

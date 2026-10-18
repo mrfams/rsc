@@ -9,30 +9,15 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 import { db } from '@/lib/db';
+import {
+  haversine,
+  isInsideCampus,
+} from '@/lib/geo';
 import { bins, reports, type BinCategory } from '@/lib/db/schema';
 import type { ReportInput } from '@/lib/validation';
 
-/** Distance in metres between two WGS84 points (haversine). */
-export function haversine(
-  a: { lat: number; lng: number },
-  b: { lat: number; lng: number },
-): number {
-  const R = 6_371_000;
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const s =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(s));
-}
-
 /** Two reports within this distance become the same bin. */
 export const BIN_LINK_RADIUS_M = 25;
-
-/** Campus geofence centre — EMU, Famagusta. Reports must arrive near campus. */
-export const CAMPUS = { lat: 35.3786, lng: 33.9422 };
-export const CAMPUS_RADIUS_M = 15_000;
 
 export type BinDto = {
   id: string;
@@ -106,7 +91,10 @@ async function findNearbyBin(
   let best: { id: string; distance: number } | null = null;
   for (const row of rows) {
     if (row.category !== category) continue;
-    const distance = haversine(point, row);
+    const distance = haversine(
+      { latitude: point.lat, longitude: point.lng },
+      { latitude: row.lat, longitude: row.lng },
+    );
     if (distance <= radiusM && (!best || distance < best.distance)) {
       best = { id: row.id, distance };
     }
@@ -148,8 +136,10 @@ export async function createReport(
   user: { id: string; email: string },
   input: ReportInput,
 ): Promise<ReportDto> {
-  if (haversine(CAMPUS, input) > CAMPUS_RADIUS_M) {
-    throw new Response('Reports must be submitted on or near campus', { status: 422 });
+  if (!isInsideCampus(input.lat, input.lng)) {
+    throw new Response('Bins must be inside the highlighted campus boundary', {
+      status: 422,
+    });
   }
 
   const photoPath = input.photoBase64 ? await storePhoto(input.photoBase64) : null;

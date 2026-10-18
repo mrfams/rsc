@@ -1,72 +1,58 @@
 /**
  * Web map: imperative Leaflet wrapper (no react-leaflet).
- * Leaflet is imported inside an effect so it can never run during SSR.
+ *
+ * Key details:
+ * - Leaflet is imported inside an effect so it never runs during SSR.
+ * - The root div sets `zIndex: 0`, which creates a stacking context. Without
+ *   it, Leaflet's internal panes (z-index 400+) escape and cover the app's
+ *   floating controls.
+ * - Basemaps are keyless raster tiles: CARTO Voyager (Google-Maps-like
+ *   street style) and Esri World Imagery (satellite).
  */
 import { useEffect, useRef } from 'react';
 
 import 'leaflet/dist/leaflet.css';
 
-import { CATEGORY_COLORS, CAMPUS_CENTER } from '@/lib/constants';
+import { CAMPUS_CENTER, CAMPUS_POLYGON, CATEGORY_COLORS } from '@/lib/constants';
 import type { MapViewProps } from './types';
 
 type LeafletModule = typeof import('leaflet');
+
+const TILE_URLS = {
+  streets:
+    'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+  satellite:
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+};
+
+const ATTRIBUTIONS: Record<string, string> = {
+  streets: '&copy; OpenStreetMap contributors &copy; CARTO',
+  satellite: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
+};
 
 export default function WebMapView({
   markers,
   center = CAMPUS_CENTER,
   onPressMarker,
   onPressMap,
+  basemap = 'streets',
   style,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<import('leaflet').Map | null>(null);
   const leafletRef = useRef<LeafletModule | null>(null);
+  const tileRef = useRef<import('leaflet').TileLayer | null>(null);
   const layersRef = useRef<Map<string, import('leaflet').CircleMarker>>(new Map());
-  // Callbacks live in refs so event handlers never need re-binding.
+  const markersRef = useRef(markers);
   const onPressMarkerRef = useRef(onPressMarker);
   const onPressMapRef = useRef(onPressMap);
-  onPressMarkerRef.current = onPressMarker;
-  onPressMapRef.current = onPressMap;
-
+  // Keep the latest props available to imperative callbacks without re-binding
+  // Leaflet handlers. Assignment happens in an effect, never during render.
   useEffect(() => {
-    let cancelled = false;
-    // Stable instance captured once; layersRef.current is never reassigned.
-    const layers = layersRef.current;
-
-    (async () => {
-      const L = await import('leaflet');
-      if (cancelled || !containerRef.current) return;
-      leafletRef.current = L;
-
-      const map = L.map(containerRef.current, {
-        center: [center.latitude, center.longitude],
-        zoom: 15,
-        zoomControl: true,
-      });
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; OpenStreetMap contributors',
-      }).addTo(map);
-
-      map.on('click', (event) => {
-        onPressMapRef.current?.(event.latlng.lat, event.latlng.lng);
-      });
-
-      mapRef.current = map;
-      // The container may have resized during layout.
-      setTimeout(() => map.invalidateSize(), 250);
-      syncMarkers();
-    })();
-
-    return () => {
-      cancelled = true;
-      const map = mapRef.current;
-      map?.remove();
-      mapRef.current = null;
-      layers.clear();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    markersRef.current = markers;
+    onPressMarkerRef.current = onPressMarker;
+    onPressMapRef.current = onPressMap;
+  });
 
   function syncMarkers() {
     const L = leafletRef.current;
@@ -74,7 +60,7 @@ export default function WebMapView({
     if (!L || !map) return;
 
     const seen = new Set<string>();
-    for (const marker of markers) {
+    for (const marker of markersRef.current) {
       seen.add(marker.id);
       const position: [number, number] = [marker.latitude, marker.longitude];
       const existing = layersRef.current.get(marker.id);
@@ -101,9 +87,70 @@ export default function WebMapView({
   }
 
   useEffect(() => {
-    syncMarkers();
+    let cancelled = false;
+    // Stable instance captured once (layersRef.current is never reassigned).
+    const layers = layersRef.current;
+
+    (async () => {
+      const L = await import('leaflet');
+      if (cancelled || !containerRef.current) return;
+      leafletRef.current = L;
+
+      const map = L.map(containerRef.current, {
+        center: [center.latitude, center.longitude],
+        zoom: 15,
+        zoomControl: false,
+      });
+      L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+      tileRef.current = L.tileLayer(TILE_URLS[basemap], {
+        maxZoom: 19,
+        attribution: ATTRIBUTIONS[basemap],
+        subdomains: 'abcd',
+        detectRetina: true,
+      }).addTo(map);
+
+      // Campus geofence outline (non-interactive so clicks pass through).
+      L.polygon(
+        CAMPUS_POLYGON.map((p) => [p.latitude, p.longitude]),
+        {
+          color: '#0E7490',
+          weight: 2,
+          dashArray: '6 6',
+          fillColor: '#0E7490',
+          fillOpacity: 0.08,
+          interactive: false,
+        },
+      ).addTo(map);
+
+      map.on('click', (event) => {
+        onPressMapRef.current?.(event.latlng.lat, event.latlng.lng);
+      });
+
+      mapRef.current = map;
+      // The container may have resized during layout.
+      setTimeout(() => map.invalidateSize(), 250);
+      syncMarkers();
+    })();
+
+    return () => {
+      cancelled = true;
+      const map = mapRef.current;
+      map?.remove();
+      mapRef.current = null;
+      tileRef.current = null;
+      layers.clear();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    syncMarkers();
   }, [markers]);
+
+  useEffect(() => {
+    tileRef.current?.setUrl(TILE_URLS[basemap]);
+  }, [basemap]);
 
   useEffect(() => {
     mapRef.current?.setView([center.latitude, center.longitude]);
@@ -115,6 +162,7 @@ export default function WebMapView({
       style={{
         position: 'absolute',
         inset: 0,
+        zIndex: 0,
         width: '100%',
         height: '100%',
         ...style,
