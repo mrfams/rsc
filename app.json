@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "EMU Bin Tracker",
-    "slug": "rsc",
+    "slug": "rscemu",
     "version": "1.0.0",
     "scheme": "rsc",
     "orientation": "portrait",
