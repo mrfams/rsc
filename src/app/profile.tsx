@@ -17,6 +17,12 @@ type MyReport = {
   bin: { category: keyof typeof BIN_CATEGORY_EMOJI };
 };
 
+type Me = {
+  user: { name: string; email: string };
+  isAdmin: boolean;
+  stats: { reportsCount: number; binsContributed: number; trustScore: number };
+};
+
 export default function ProfileScreen() {
   const router = useRouter();
   const { data: session, isPending } = useSession();
@@ -25,6 +31,13 @@ export default function ProfileScreen() {
     queryKey: ['my-reports'],
     queryFn: () => api<{ reports: MyReport[] }>('/api/reports?mine=1'),
     enabled: Boolean(session?.user),
+  });
+
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api<Me>('/api/me'),
+    enabled: Boolean(session?.user),
+    retry: false,
   });
 
   if (isPending) {
@@ -67,7 +80,22 @@ export default function ProfileScreen() {
         <View style={styles.userCard}>
           <Text style={styles.userName}>{session.user.name}</Text>
           <Text style={styles.userEmail}>{session.user.email}</Text>
+          {me ? (
+            <View style={styles.trustCard}>
+              <Text style={styles.trustTitle}>Trust score: {me.stats.trustScore}/100</Text>
+              <Text style={styles.trustSub}>
+                {me.stats.binsContributed} bin{me.stats.binsContributed === 1 ? '' : 's'} contributed
+                · {me.stats.reportsCount} report{me.stats.reportsCount === 1 ? '' : 's'}
+              </Text>
+            </View>
+          ) : null}
         </View>
+
+        {me?.isAdmin ? (
+          <Pressable style={styles.adminButton} onPress={() => router.push('/admin')}>
+            <Text style={styles.primaryButtonText}>🛠 Moderation panel</Text>
+          </Pressable>
+        ) : null}
 
         <View style={styles.row}>
           <Text style={styles.sectionTitle}>My reports ({data?.reports.length ?? 0})</Text>
@@ -142,6 +170,21 @@ const styles = StyleSheet.create({
   },
   userName: { fontSize: 18, fontWeight: '700', color: COLORS.text },
   userEmail: { fontSize: 14, color: COLORS.textMuted },
+  trustCard: {
+    marginTop: 8,
+    backgroundColor: COLORS.bg,
+    borderRadius: 10,
+    padding: 10,
+    gap: 2,
+  },
+  trustTitle: { fontSize: 14, fontWeight: '700', color: COLORS.text },
+  trustSub: { fontSize: 12, color: COLORS.textMuted },
+  adminButton: {
+    backgroundColor: COLORS.text,
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: 'center',
+  },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: COLORS.text },
   link: { color: COLORS.primary, fontWeight: '600' },

@@ -39,7 +39,7 @@ export default function SignUpScreen() {
         </Pressable>
 
         <Text style={styles.title}>Create account</Text>
-        <Text style={styles.subtitle}>Join the campus recycling map.</Text>
+        <Text style={styles.subtitle}>Join the campus recycling map. A campus email (@emu.edu.tr) is required.</Text>
 
         <View style={styles.form}>
           <Field label="Name" value={name} onChangeText={setName} placeholder="Your name" autoCapitalize="words" />

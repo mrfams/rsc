@@ -23,6 +23,11 @@ export const BIN_CATEGORY_EMOJI: Record<(typeof binCategoryEnum.enumValues)[numb
   general: '🗑️',
 };
 
+export const binStatusSchema = z.enum(binStatusEnum.enumValues);
+export type BinStatusInput = z.infer<typeof binStatusSchema>;
+export type BinStatus = (typeof binStatusEnum.enumValues)[number];
+export { binStatusEnum };
+
 export const BIN_STATUS_LABEL: Record<(typeof binStatusEnum.enumValues)[number], string> = {
   pending: 'Pending',
   verified: 'Verified',

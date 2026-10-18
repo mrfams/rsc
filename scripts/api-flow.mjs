@@ -27,11 +27,23 @@ async function req(path, init = {}) {
 }
 
 const email = `flow${Date.now()}@emu.edu.tr`;
+const emailWrongDomain = `flow${Date.now()}@example.org`;
 const steps = [];
 
 function log(name, r) {
   steps.push(`${r.status < 400 ? 'PASS' : 'FAIL'} ${name} [${r.status}] ${JSON.stringify(r.body).slice(0, 160)}`);
 }
+
+function expect(name, ok, body) {
+  steps.push(`${ok ? 'PASS' : 'FAIL'} ${name}${ok ? '' : ' ← ' + JSON.stringify(body).slice(0, 200)}`);
+}
+
+// Domain gate: a non-campus email must be rejected by Better Auth.
+const badDomain = await req('/api/auth/sign-up/email', {
+  method: 'POST',
+  body: JSON.stringify({ name: 'Bad Domain', email: emailWrongDomain, password: 'FlowPass123' }),
+});
+expect('domain-gate-rejected', badDomain.status >= 400, badDomain);
 
 const signup = await req('/api/auth/sign-up/email', {
   method: 'POST',
@@ -89,5 +101,51 @@ log(
     ? { status: 200, body: { count: mine.body.reports.length } }
     : mine,
 );
+
+// --- Verification wave: a second distinct member sighting the same bin ---
+const binId = report.body?.binId;
+
+cookie = null;
+const signupB = await req('/api/auth/sign-up/email', {
+  method: 'POST',
+  body: JSON.stringify({ name: 'Flow Two', email: `flow2${Date.now()}@emu.edu.tr`, password: 'FlowPass123' }),
+});
+log('sign-up-second', signupB);
+
+const confirm = await req('/api/reports', {
+  method: 'POST',
+  body: JSON.stringify({ lat: 35.37868, lng: 33.94224, category: 'glass', note: 'confirm sighting' }),
+});
+log('create-report-second', confirm);
+
+const waves = await req(`/api/bins/${binId}`);
+expect(
+  'verification-wave-verified',
+  waves.status === 200 && waves.body?.status === 'verified' && waves.body?.reports?.length >= 2,
+  waves.body?.status,
+);
+
+// --- Dispute flow: second member flags the bin missing ---
+const dispute = await req(`/api/bins/${binId}/dispute`, { method: 'POST', body: '{}' });
+expect('dispute-status', dispute.status === 200 && dispute.body?.status === 'disputed', dispute.body);
+
+// --- Trust stats via /api/me ---
+const me = await req('/api/me');
+expect(
+  'me-stats',
+  me.status === 200 && typeof me.body?.stats?.trustScore === 'number' && me.body.stats.reportsCount >= 1,
+  me.body,
+);
+
+// --- Admin gate: non-admins get 403 on moderation routes ---
+const adminGate = await req(`/api/admin/bins/${binId}`, {
+  method: 'PATCH',
+  body: JSON.stringify({ status: 'removed' }),
+});
+expect('admin-gate-403', adminGate.status === 403, adminGate);
+
+// --- Bin detail fetch (marker press target) ---
+const binDetail = await req(`/api/bins/${binId}`);
+expect('bin-detail', binDetail.status === 200 && Array.isArray(binDetail.body?.reports), binDetail.body?.status);
 
 console.log(steps.join('\n'));

@@ -2,19 +2,22 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import * as Location from 'expo-location';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import MapView from '@/components/map/MapView';
 import type { MapMarker } from '@/components/map/types';
 import { api } from '@/lib/api-client';
+import type { BinCategory } from '@/lib/db/schema';
 import { CAMPUS_CENTER, CAMPUS_POLYGON, CATEGORY_COLORS, COLORS } from '@/lib/constants';
 import type { BinDto } from '@/lib/report-service';
+import { BIN_CATEGORY_EMOJI } from '@/lib/validation';
 
 export default function MapScreen() {
   const router = useRouter();
   const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [basemap, setBasemap] = useState<'streets' | 'satellite'>('streets');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | BinCategory>('all');
 
   useEffect(() => {
     (async () => {
@@ -31,18 +34,27 @@ export default function MapScreen() {
     refetchOnWindowFocus: true,
   });
 
-  const markers: MapMarker[] = (data ?? []).map((bin) => ({
-    id: bin.id,
-    latitude: bin.lat,
-    longitude: bin.lng,
-    title: `${bin.category} bin · ${bin.status}`,
-    color: CATEGORY_COLORS[bin.category],
-  }));
+  const markers: MapMarker[] = (data ?? [])
+    .filter((bin) => categoryFilter === 'all' || bin.category === categoryFilter)
+    .map((bin) => ({
+      id: bin.id,
+      latitude: bin.lat,
+      longitude: bin.lng,
+      title: `${bin.category} bin · ${bin.status}`,
+      color: CATEGORY_COLORS[bin.category],
+    }));
 
   function openMarker(id: string) {
-    const bin = (data ?? []).find((b) => b.id === id);
-    if (bin) router.push(`/report/${bin.id}`);
+    router.push(`/bins/${id}`);
   }
+
+  const filterOptions: { key: 'all' | BinCategory; label: string }[] = [
+    { key: 'all', label: 'All' },
+    ...(Object.keys(BIN_CATEGORY_EMOJI) as BinCategory[]).map((key) => ({
+      key,
+      label: `${BIN_CATEGORY_EMOJI[key]} ${key}`,
+    })),
+  ];
 
   return (
     <View style={styles.container}>
@@ -60,7 +72,7 @@ export default function MapScreen() {
           <View style={styles.titleCard}>
             <Text style={styles.title}>EMU Bin Tracker</Text>
             <Text style={styles.subtitle}>
-              {isLoading ? 'Loading bins…' : `${data?.length ?? 0} bins in the campus zone`}
+              {isLoading ? 'Loading bins…' : `${markers.length} bins${categoryFilter === 'all' ? '' : ` · ${categoryFilter}`}`}
             </Text>
           </View>
           <View style={styles.layerToggle}>
@@ -84,6 +96,35 @@ export default function MapScreen() {
             </Pressable>
           </View>
         </View>
+        <FlatList
+          data={filterOptions}
+          keyExtractor={(o) => o.key}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterRow}
+          contentContainerStyle={styles.filterContent}
+          pointerEvents="box-none"
+          scrollEnabled={false}
+          renderItem={({ item }) => (
+            <Pressable
+              onPress={() => setCategoryFilter(item.key)}
+              pointerEvents="auto"
+              style={[
+                styles.filterChip,
+                categoryFilter === item.key && styles.filterChipActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  categoryFilter === item.key && styles.filterChipTextActive,
+                ]}
+              >
+                {item.label}
+              </Text>
+            </Pressable>
+          )}
+        />
       </SafeAreaView>
 
       <View style={styles.bottomBar} pointerEvents="box-none">
@@ -162,6 +203,22 @@ const styles = StyleSheet.create({
   layerChipActive: { backgroundColor: COLORS.primary },
   layerText: { fontSize: 12, fontWeight: '600', color: COLORS.text },
   layerTextActive: { color: '#fff' },
+  filterRow: { marginTop: 4 },
+  filterContent: { gap: 6, paddingHorizontal: 16, paddingVertical: 4 },
+  filterChip: {
+    backgroundColor: 'rgba(255,255,255,0.94)',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  filterChipActive: { backgroundColor: COLORS.primary },
+  filterChipText: { fontSize: 12, fontWeight: '600', color: COLORS.text, textTransform: 'capitalize' },
+  filterChipTextActive: { color: '#fff' },
   bottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 20, elevation: 20 },
   errorCard: {
     marginHorizontal: 16,

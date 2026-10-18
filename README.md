@@ -8,13 +8,15 @@ Better Auth and a Neon Postgres database, deployed on Vercel.
 
 | Area | Details |
 |---|---|
-| **Auth** | Email + password sign-up/sign-in, DB-backed sessions, sign-out — works on web **and** native (SecureStore cookie storage) |
-| **Map** | Real loading tiles on web (Leaflet + OpenStreetMap) and native (Apple Maps on iOS / Google Maps on Android via `expo-maps`), campus-centred, live marker colours per category |
-| **Reports** | Tap-to-place map pin, category picker, note, optional photo (client-compressed to ≤ ~450 KB), GPS geofence against off-campus submissions |
-| **Bin linking** | Reports within 25 m (per category) merge into the same bin and increment its report count |
-| **Server** | Expo Router API routes: `/api/health`, `/api/bins`, `/api/reports`, `/api/reports/[id]`, `/api/photos/*`, `/api/auth/*` (Better Auth) |
-| **Safety** | Zod validation on all inputs, JPEG magic-byte check + size cap, unauthenticated and off-campus submissions rejected, SQL parameterised through Drizzle |
-| **Tests** | `node scripts/api-flow.mjs` runs a 7-step end-to-end flow (sign-up → session → report → auth rejection → geofence → bins → my reports) against the dev server or any deployment |
+| **Auth** | Email + password sign-up/sign-in restricted to campus emails (@emu.edu.tr by default), DB-backed sessions, sign-out — web **and** native (SecureStore cookie storage) |
+| **Map** | Web: Leaflet with Google-style CARTO Voyager tiles + satellite toggle; native: Apple Maps / Google Maps via `expo-maps`, same toggle; campus geofence polygon drawn everywhere; category filter chips |
+| **Reports** | Tap-to-place map pin, category picker, note, optional photo (≤ ~450 KB), campus-polygon geofence enforced server-side |
+| **Bin lifecycle** | Reports within 25 m (per category) merge into the same bin; **verification waves** promote a bin to `verified` after sight by 2 distinct members; members can flag bins **missing** (disputed); a new independent sighting clears it again |
+| **Trust** | `/api/me` computes trust score (15 pts per distinct bin + 3 per report, capped 100) shown on the profile |
+| **Moderation** | `/admin` panel (env `ADMIN_EMAILS` gate): list every bin incl. removed, force lifecycle status, delete bad reports |
+| **Server** | API routes: `/api/health`, `/api/bins` (+`/[id]`, `/[id]/dispute`), `/api/reports` (+`/[id]`, `?mine=1`), `/api/me`, `/api/photos/*`, `/api/admin/*`, `/api/auth/*` (Better Auth) |
+| **Safety** | Zod validation on all inputs, JPEG magic-byte check + size cap, unauthenticated/off-campus submissions rejected, SQL parameterised through Drizzle |
+| **Tests** | `node scripts/api-flow.mjs` — 13-step end-to-end flow incl. domain gate, verification wave, dispute, trust stats and admin gates |
 
 Backed up from the previous rewrite: `SPEC.md` and `ROADMAP.md` live in
 `C:\Users\asano\Desktop\RSC-backup` — verification waves, trust scoring,
@@ -76,10 +78,12 @@ Already wired: pushing to GitHub deploys automatically (Expo project on Vercel).
    - `DATABASE_URL` — Neon pooled connection string
    - `BETTER_AUTH_SECRET` — random 32+ chars
    - `BETTER_AUTH_URL` — production URL, e.g. `https://<project>.vercel.app`
+   - `ADMIN_EMAILS` — comma-separated moderator emails (enables `/admin`)
+   - `ALLOWED_EMAIL_DOMAINS` — optional, defaults to `emu.edu.tr`
    - `BLOB_READ_WRITE_TOKEN` — optional (photos), via Vercel Blob integration
 2. **Native apps** need the deployed URL baked in: set
    `EXPO_PUBLIC_API_URL` to the production origin and build via
-   `npx eas build` (an `eas.json` can be added when app-store first).
+   `bunx eas build` (an `eas.json` can be added when app-store first).
 
 ### Native map note
 
@@ -101,7 +105,7 @@ Schema lives in `src/lib/db/schema.ts`; `npm run db:push` applies it.
 
 ## Known gaps (next phases per ROADMAP.md)
 
-- Verification waves (confirm/dispute with distance + cooldown gates)
-- Trust scoring, moderation tools, CSV export
+- Native app store builds (EAS / `expo run:android`, Google Maps API key)
 - Offline queue + service-worker caching for the web PWA
-- Push notifications (Expo push service)
+- Push notifications (Expo push service — needs the native build first)
+- Marker clustering on the map for very large datasets

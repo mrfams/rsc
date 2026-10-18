@@ -1,12 +1,32 @@
 import 'dotenv/config';
 import { expo } from '@better-auth/expo';
 import { betterAuth } from 'better-auth';
+import { APIError } from 'better-auth/api';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 
 import { db } from './db';
 import * as authSchema from './db/auth-schema';
 
 const dev = process.env.NODE_ENV !== 'production';
+
+/**
+ * Campus email gate (verification wave #0): only sign-ups from these domains
+ * are accepted. Comma-separated; default is EMU mail.
+ */
+const ALLOWED_EMAIL_DOMAINS = (process.env.ALLOWED_EMAIL_DOMAINS ?? 'emu.edu.tr')
+  .split(',')
+  .map((d) => d.trim().toLowerCase())
+  .filter(Boolean);
+
+/** Emails granted moderation powers in /admin (comma-separated env list). */
+export function isAdminEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const list = (process.env.ADMIN_EMAILS ?? '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return list.includes(email.toLowerCase());
+}
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
@@ -16,6 +36,22 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     // Default Better Auth password policy applies (min 8 chars).
+  },
+  databaseHooks: {
+    user: {
+      create: {
+        before: async (created) => {
+          const email = created.email?.toLowerCase() ?? '';
+          const at = email.lastIndexOf('@');
+          const domain = at >= 0 ? email.slice(at + 1) : '';
+          if (ALLOWED_EMAIL_DOMAINS.length > 0 && !ALLOWED_EMAIL_DOMAINS.includes(domain)) {
+            throw new APIError('BAD_REQUEST', {
+              message: `Sign-up needs a campus email (${ALLOWED_EMAIL_DOMAINS.join(', ')})`,
+            });
+          }
+        },
+      },
+    },
   },
   plugins: [expo()],
   trustedOrigins: [

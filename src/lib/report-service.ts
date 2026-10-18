@@ -9,15 +9,18 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 import { db } from '@/lib/db';
-import {
-  haversine,
-  isInsideCampus,
-} from '@/lib/geo';
-import { bins, reports, type BinCategory } from '@/lib/db/schema';
+import { haversine, isInsideCampus } from '@/lib/geo';
+import { bins, reports, type BinCategory, type BinStatus } from '@/lib/db/schema';
 import type { ReportInput } from '@/lib/validation';
 
 /** Two reports within this distance become the same bin. */
 export const BIN_LINK_RADIUS_M = 25;
+
+/**
+ * Verification wave: once a bin has been sighted independently by this many
+ * distinct members it becomes "verified".
+ */
+export const MIN_VERIFY_CONTRIBUTORS = 2;
 
 export type BinDto = {
   id: string;
@@ -28,12 +31,14 @@ export type BinDto = {
   status: string;
   reportCount: number;
   createdAt: string;
+  updatedAt: string;
 };
 
 export type ReportDto = {
   id: string;
   binId: string;
   userId: string;
+  userEmail: string;
   lat: number;
   lng: number;
   note: string | null;
@@ -42,6 +47,8 @@ export type ReportDto = {
   bin?: BinDto;
 };
 
+export type BinDetailDto = BinDto & { reports: ReportDto[] };
+
 function photoToUrl(photoPath: string | null): string | null {
   if (!photoPath) return null;
   if (photoPath.startsWith('http')) return photoPath;
@@ -49,6 +56,49 @@ function photoToUrl(photoPath: string | null): string | null {
   // The disk filename strips the blob-style prefix.
   const file = photoPath.replace(/^bins\/photos\//, '');
   return `/api/photos/${file}`;
+}
+
+function mapBin(row: {
+  id: string;
+  category: BinCategory;
+  lat: number;
+  lng: number;
+  area: string | null;
+  status: string;
+  reportCount: number;
+  createdAt: Date;
+  updatedAt: Date;
+}): BinDto {
+  return {
+    ...row,
+    reportCount: Number(row.reportCount),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapReport(report: {
+  id: string;
+  binId: string;
+  userId: string;
+  userEmail: string;
+  lat: number;
+  lng: number;
+  note: string | null;
+  photoPath: string | null;
+  createdAt: Date;
+}): ReportDto {
+  return {
+    id: report.id,
+    binId: report.binId,
+    userId: report.userId,
+    userEmail: report.userEmail,
+    lat: report.lat,
+    lng: report.lng,
+    note: report.note,
+    photoUrl: photoToUrl(report.photoPath),
+    createdAt: report.createdAt.toISOString(),
+  };
 }
 
 const sqlBins = {
@@ -60,6 +110,7 @@ const sqlBins = {
   status: bins.status,
   reportCount: bins.reportCount,
   createdAt: bins.createdAt,
+  updatedAt: bins.updatedAt,
 };
 
 /** Public map data. */
@@ -70,11 +121,13 @@ export async function listBins(): Promise<BinDto[]> {
     .where(sql`${bins.status} <> 'removed'`)
     .orderBy(desc(bins.createdAt));
 
-  return rows.map((row) => ({
-    ...row,
-    reportCount: Number(row.reportCount),
-    createdAt: row.createdAt.toISOString(),
-  }));
+  return rows.map(mapBin);
+}
+
+/** Admin-only: every bin including removed ones, for moderation. */
+export async function listAllBins(): Promise<BinDto[]> {
+  const rows = await db.select(sqlBins).from(bins).orderBy(desc(bins.updatedAt));
+  return rows.map(mapBin);
 }
 
 /** Find the closest bin of the same category to a point, or null when farther than radius. */
@@ -176,16 +229,36 @@ export async function createReport(
     })
     .where(eq(bins.id, binId));
 
+  await refreshBinStatusFromWave(binId);
+
   return {
     id: inserted.id,
     binId,
     userId: inserted.userId,
+    userEmail: inserted.userEmail,
     lat: inserted.lat,
     lng: inserted.lng,
     note: inserted.note,
     photoUrl: photoToUrl(inserted.photoPath),
     createdAt: inserted.createdAt.toISOString(),
   };
+}
+
+/**
+ * Verification wave: recount distinct contributors for the bin and set its
+ * lifecycle status. A fresh independent sighting also clears a dispute.
+ */
+async function refreshBinStatusFromWave(binId: string): Promise<void> {
+  const [row] = await db
+    .select({ n: sql<number>`count(distinct ${reports.userId})` })
+    .from(reports)
+    .where(eq(reports.binId, binId));
+  const contributors = Number(row?.n ?? 0);
+  const status: BinStatus = contributors >= MIN_VERIFY_CONTRIBUTORS ? 'verified' : 'pending';
+  await db
+    .update(bins)
+    .set({ status, updatedAt: new Date() })
+    .where(eq(bins.id, binId));
 }
 
 export async function getReport(id: string): Promise<ReportDto | null> {
@@ -199,20 +272,81 @@ export async function getReport(id: string): Promise<ReportDto | null> {
   if (rows.length === 0) return null;
   const { report, bin } = rows[0];
   return {
-    id: report.id,
-    binId: report.binId,
-    userId: report.userId,
-    lat: report.lat,
-    lng: report.lng,
-    note: report.note,
-    photoUrl: photoToUrl(report.photoPath),
-    createdAt: report.createdAt.toISOString(),
-    bin: {
-      ...bin,
-      reportCount: Number(bin.reportCount),
-      createdAt: bin.createdAt.toISOString(),
-    },
+    ...mapReport(report),
+    bin: mapBin(bin),
   };
+}
+
+/** Bin page data: the bin plus its recent sighting history. */
+export async function getBinWithReports(id: string): Promise<BinDetailDto | null> {
+  const binRows = await db.select(sqlBins).from(bins).where(eq(bins.id, id)).limit(1);
+  if (binRows.length === 0) return null;
+
+  const repRows = await db
+    .select({ report: reports })
+    .from(reports)
+    .where(eq(reports.binId, id))
+    .orderBy(desc(reports.createdAt))
+    .limit(30);
+
+  return { ...mapBin(binRows[0]), reports: repRows.map(({ report }) => mapReport(report)) };
+}
+
+/** A member flags the bin as missing/wrong → enters the disputed state. */
+export async function disputeBin(binId: string): Promise<BinDto | null> {
+  const updated = await db
+    .update(bins)
+    .set({ status: 'disputed', updatedAt: new Date() })
+    .where(sql`${bins.id} = ${binId} and ${bins.status} <> 'removed'`)
+    .returning(sqlBins);
+  return updated[0] ? mapBin(updated[0]) : null;
+}
+
+/** Moderation: force any lifecycle status. Admin-only routes call this. */
+export async function setBinStatus(binId: string, status: BinStatus): Promise<BinDto | null> {
+  const updated = await db
+    .update(bins)
+    .set({ status, updatedAt: new Date() })
+    .where(eq(bins.id, binId))
+    .returning(sqlBins);
+  return updated[0] ? mapBin(updated[0]) : null;
+}
+
+/** Moderation: remove a bad report; keeps the bin count >= 0. */
+export async function deleteReport(reportId: string): Promise<boolean> {
+  const deleted = await db
+    .delete(reports)
+    .where(eq(reports.id, reportId))
+    .returning({ binId: reports.binId });
+  if (deleted.length === 0) return false;
+  await db
+    .update(bins)
+    .set({ reportCount: sql`greatest(${bins.reportCount} - 1, 0)`, updatedAt: new Date() })
+    .where(eq(bins.id, deleted[0].binId));
+  return true;
+}
+
+/**
+ * Trust score (v1): contributions to the map.
+ * 100 → trusted expert; 15 per distinct bin + 3 per report, capped at 100.
+ */
+export async function getUserStats(userId: string): Promise<{
+  reportsCount: number;
+  binsContributed: number;
+  trustScore: number;
+}> {
+  const [agg] = await db
+    .select({
+      reportsCount: sql<number>`count(*)`,
+      binsContributed: sql<number>`count(distinct ${reports.binId})`,
+    })
+    .from(reports)
+    .where(eq(reports.userId, userId));
+
+  const reportsCount = Number(agg?.reportsCount ?? 0);
+  const binsContributed = Number(agg?.binsContributed ?? 0);
+  const trustScore = Math.min(100, 15 * binsContributed + 3 * reportsCount);
+  return { reportsCount, binsContributed, trustScore };
 }
 
 export async function listMyReports(userId: string): Promise<ReportDto[]> {
@@ -224,21 +358,7 @@ export async function listMyReports(userId: string): Promise<ReportDto[]> {
     .orderBy(desc(reports.createdAt))
     .limit(50);
 
-  return rows.map(({ report, bin }) => ({
-    id: report.id,
-    binId: report.binId,
-    userId: report.userId,
-    lat: report.lat,
-    lng: report.lng,
-    note: report.note,
-    photoUrl: photoToUrl(report.photoPath),
-    createdAt: report.createdAt.toISOString(),
-    bin: {
-      ...bin,
-      reportCount: Number(bin.reportCount),
-      createdAt: bin.createdAt.toISOString(),
-    },
-  }));
+  return rows.map(({ report, bin }) => ({ ...mapReport(report), bin: mapBin(bin) }));
 }
 
 /** Public recent-feed (no user data beyond email). */
@@ -250,19 +370,5 @@ export async function listPublicReports(): Promise<ReportDto[]> {
     .orderBy(desc(reports.createdAt))
     .limit(20);
 
-  return rows.map(({ report, bin }) => ({
-    id: report.id,
-    binId: report.binId,
-    userId: report.userId,
-    lat: report.lat,
-    lng: report.lng,
-    note: report.note,
-    photoUrl: photoToUrl(report.photoPath),
-    createdAt: report.createdAt.toISOString(),
-    bin: {
-      ...bin,
-      reportCount: Number(bin.reportCount),
-      createdAt: bin.createdAt.toISOString(),
-    },
-  }));
+  return rows.map(({ report, bin }) => ({ ...mapReport(report), bin: mapBin(bin) }));
 }
