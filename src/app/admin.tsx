@@ -388,6 +388,12 @@ function GeofenceTab() {
   }
 
   const previewMarkers: MapMarker[] = cleaningPreview(editing);
+  const [pressedMarkerId, setPressedMarkerId] = useState<string | null>(null);
+
+  // Compute pressed marker from ID on render (no setState in effect)
+  const pressedMarkerMarker = pressedMarkerId
+    ? previewMarkers.find((m) => m.id === pressedMarkerId) ?? null
+    : null;
 
   return (
     <ScrollView style={styles.tabBody} contentContainerStyle={{ gap: 12, paddingBottom: 40 }}>
@@ -405,8 +411,28 @@ function GeofenceTab() {
       <Text style={styles.muted}>Points of the polygon reports must land inside. Last point closes back to the first.</Text>
 
       <View style={styles.mapCard}>
-        <MapView markers={previewMarkers} center={poleCenter(previewMarkers)} polygon={previewCoords(editing)} style={styles.mapPreview} showUserLocation={false} />
+        <MapView
+          markers={previewMarkers}
+          center={poleCenter(previewMarkers)}
+          polygon={previewCoords(editing)}
+          style={styles.mapPreview}
+          showUserLocation={false}
+          onPressMarker={pressedMarkerId => setPressedMarkerId(pressedMarkerId)}
+        />
       </View>
+      {pressedMarkerMarker && (
+        <View style={styles.pressedMarkerInfo}>
+          <Text style={styles.pressedMarkerTitle}>Point selected</Text>
+          <Text style={styles.pressedMarkerIndex}>Index: {pressedMarkerMarker.id.replace('pt', '')}</Text>
+          <Text style={styles.pressedMarkerCoords}>
+            Lat: {pressedMarkerMarker.latitude.toFixed(6)}, Lng: {pressedMarkerMarker.longitude.toFixed(6)}
+          </Text>
+          <Pressable onPress={() => setPressedMarkerId(null)} style={styles.closeButton}>
+            <Text style={styles.closeButtonText}>Close</Text>
+          </Pressable>
+        </View>
+      )}
+
 
       {isLoading ? (
         <ActivityIndicator color={COLORS.primary} />
@@ -571,4 +597,21 @@ const styles = StyleSheet.create({
 
   backButton: { backgroundColor: COLORS.primary, borderRadius: 12, paddingHorizontal: 22, paddingVertical: 12 },
   backButtonText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+
+  pressedMarkerInfo: {
+    position: 'absolute',
+    top: 20,
+    right: 20,
+    backgroundColor: COLORS.surface,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    zIndex: 100,
+  },
+  pressedMarkerTitle: { fontSize: 14, fontWeight: '700', color: COLORS.text },
+  pressedMarkerIndex: { fontSize: 12, color: COLORS.primary },
+  pressedMarkerCoords: { fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
+  closeButton: { alignSelf: 'flex-end', padding: 4 },
+  closeButtonText: { color: COLORS.textMuted, fontWeight: '600' },
 });
