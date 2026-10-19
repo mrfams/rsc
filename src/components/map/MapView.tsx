@@ -18,7 +18,7 @@ import {
 } from '@maplibre/maplibre-react-native';
 import type { StyleSpecification, PressEvent } from '@maplibre/maplibre-react-native';
 import { useMemo } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, Image } from 'react-native';
 
 import type { Feature, Polygon, Position } from 'geojson';
 import { CAMPUS_CENTER, COLORS } from '@/lib/constants';
@@ -144,14 +144,27 @@ export default function MapView({
         >
           <View
             style={{
-              width: 18,
-              height: 18,
-              borderRadius: 9,
-              backgroundColor: marker.color ?? COLORS.primary,
-              borderWidth: 2,
-              borderColor: '#FFFFFF',
+              width: 32,
+              height: 32,
+              borderRadius: 8,
+              justifyContent: 'center',
+              alignItems: 'center',
+              overflow: 'hidden',
             }}
-          />
+          >
+            <Image
+              source={require('./bin-icon.png')}
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 6,
+                backgroundColor: marker.color ?? COLORS.primary,
+                borderWidth: 2,
+                borderColor: '#FFFFFF',
+              }}
+              resizeMode='contain'
+            />
+          </View>
         </Marker>
       ))}
 
@@ -162,4 +175,5 @@ export default function MapView({
 
 const styles = StyleSheet.create({
   container: { flex: 1, overflow: 'hidden' },
+  binIcon: { width: 32, height: 32, borderRadius: 8, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
 });

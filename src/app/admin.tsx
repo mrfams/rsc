@@ -18,7 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView from '@/components/map/MapView';
 import type { MapMarker } from '@/components/map/types';
 import { api } from '@/lib/api-client';
-import { CAMPUS_CENTER, COLORS } from '@/lib/constants';
+import { CAMPUS_CENTER, COLORS, CATEGORIES, CATEGORY_COLORS } from '@/lib/constants';
 import type { BinDto } from '@/lib/report-service';
 import { BIN_STATUS_LABEL, binStatusEnum, categoryEmoji, type BinStatus } from '@/lib/validation';
 
@@ -253,6 +253,35 @@ function TypesTab() {
 
       <View style={{ height: 14 }} />
 
+      {/* Slidable type pills */}
+      <View style={{ overflow: 'hidden', flexDirection: 'row' }}>
+        {CATEGORIES.map((category) => {
+          const categoryColor = CATEGORY_COLORS[category];
+          const categoryData = data?.find((c) => c.slug === category);
+          const isActive = categoryData?.active ?? false;
+          return (
+            <Pressable
+              key={category}
+              style={[
+                styles.typePill,
+                isActive && styles.typePillActive,
+                categoryColor && { backgroundColor: categoryColor },
+              ]}
+              onPress={() => {
+                // Handle type selection
+              }}
+            >
+              <Text style={[
+                styles.typePillText,
+                isActive && styles.typePillTextActive,
+              ]}>
+                {category}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       <FlatList
         data={data ?? []}
         keyExtractor={(c) => c.slug}
@@ -395,6 +424,9 @@ function GeofenceTab() {
     ? previewMarkers.find((m) => m.id === pressedMarkerId) ?? null
     : null;
 
+  // Bottom sheet visibility is driven by pressedMarkerId
+  // No effect needed - render conditional handles showing/hiding
+
   return (
     <ScrollView style={styles.tabBody} contentContainerStyle={{ gap: 12, paddingBottom: 40 }}>
       <View style={styles.headerRow}>
@@ -421,15 +453,18 @@ function GeofenceTab() {
         />
       </View>
       {pressedMarkerMarker && (
-        <View style={styles.pressedMarkerInfo}>
-          <Text style={styles.pressedMarkerTitle}>Point selected</Text>
-          <Text style={styles.pressedMarkerIndex}>Index: {pressedMarkerMarker.id.replace('pt', '')}</Text>
-          <Text style={styles.pressedMarkerCoords}>
-            Lat: {pressedMarkerMarker.latitude.toFixed(6)}, Lng: {pressedMarkerMarker.longitude.toFixed(6)}
-          </Text>
-          <Pressable onPress={() => setPressedMarkerId(null)} style={styles.closeButton}>
-            <Text style={styles.closeButtonText}>Close</Text>
-          </Pressable>
+        <View style={styles.bottomSheet}>
+          <View style={styles.bottomSheetHandle} />
+          <View style={styles.bottomSheetContent}>
+            <Text style={styles.bottomSheetTitle}>Point selected</Text>
+            <Text style={styles.bottomSheetIndex}>Index: {pressedMarkerMarker?.id.replace('pt', '') ?? ''}</Text>
+            <Text style={styles.bottomSheetCoords}>
+              Lat: {pressedMarkerMarker?.latitude.toFixed(6) ?? ''}, Lng: {pressedMarkerMarker?.longitude.toFixed(6) ?? ''}
+            </Text>
+            <Pressable onPress={() => setPressedMarkerId(null)} style={styles.bottomSheetClose}>
+              <Text style={styles.bottomSheetCloseText}>Close</Text>
+            </Pressable>
+          </View>
         </View>
       )}
 
@@ -590,7 +625,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
   },
-  mapPreview: { height: 280, width: '100%' },
+  mapPreview: { height: 320, width: '100%' },
   pointRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   pointIndex: { width: 24, color: COLORS.textMuted, fontSize: 13 },
   pointRemove: { color: COLORS.danger, paddingHorizontal: 6 },
@@ -614,4 +649,53 @@ const styles = StyleSheet.create({
   pressedMarkerCoords: { fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
   closeButton: { alignSelf: 'flex-end', padding: 4 },
   closeButtonText: { color: COLORS.textMuted, fontWeight: '600' },
+
+  bottomSheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: COLORS.surface,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 40,
+    maxHeight: 400,
+    marginBottom: 20,
+  },
+  bottomSheetHandle: {
+    width: 40,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.border,
+    marginBottom: 16,
+    alignSelf: 'center',
+  },
+  bottomSheetContent: { flexDirection: 'column', gap: 8 },
+  bottomSheetTitle: { fontSize: 16, fontWeight: '700', color: COLORS.text },
+  bottomSheetIndex: { fontSize: 14, color: COLORS.primary },
+  bottomSheetCoords: { fontSize: 14, color: COLORS.textMuted },
+  bottomSheetClose: { padding: 8, borderRadius: 10, backgroundColor: COLORS.bg, marginTop: 12 },
+  bottomSheetCloseText: { color: COLORS.textMuted, fontWeight: '600' },
+
+  typePill: {
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: COLORS.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    marginHorizontal: 4,
+    flex: 1,
+  },
+  typePillActive: {
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: COLORS.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  typePillText: { fontSize: 12, fontWeight: '600', color: COLORS.text },
+  typePillTextActive: { color: '#fff', fontWeight: '600' },
 });

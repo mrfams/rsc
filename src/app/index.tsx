@@ -95,11 +95,22 @@ export default function MapScreen() {
       longitude: bin.lng,
       title: `${bin.category} bin · ${bin.status}`,
       color: categoryColor(bin.category),
-    }));
+    }))
 
   function openMarker(id: string) {
     router.push(`/bins/${id}`);
   }
+
+  const [bottomSheetBottom, setBottomSheetBottom] = useState<string | number>(0);
+
+  const showBinBottomSheet = (binId: string) => {
+    openMarker(binId);
+    setBottomSheetBottom(binId);
+  };
+
+  const closeBinBottomSheet = () => {
+    setBottomSheetBottom(0);
+  };
 
   const filterOptions: { key: 'all' | string; label: string }[] = [
     { key: 'all', label: 'All' },
@@ -114,7 +125,7 @@ export default function MapScreen() {
         polygon={config && config.campusPolygon.length > 0 ? config.campusPolygon : undefined}
         maskOutside
         basemap={basemap}
-        onPressMarker={openMarker}
+        onPressMarker={showBinBottomSheet}
         style={styles.map}
       />
 
@@ -199,6 +210,19 @@ export default function MapScreen() {
           <ActivityIndicator color={COLORS.primary} />
         </View>
       ) : null}
+
+      {/* Bin bottom sheet */}
+      {bottomSheetBottom && (
+        <View style={styles.binBottomSheet}>
+          <View style={styles.binBottomSheetHandle} />
+          <View style={styles.binBottomSheetContent}>
+            <Text style={styles.binBottomSheetTitle}>Bin details</Text>
+            <Pressable onPress={closeBinBottomSheet} style={styles.binBottomSheetClose}>
+              <Text style={styles.binBottomSheetCloseText}>Close</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -285,4 +309,32 @@ const styles = StyleSheet.create({
   },
   pillSpinner: { marginRight: 2 },
   reconnectingText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+
+  binBottomSheet: {
+    position: 'absolute',
+    bottom: 180,
+    left: 0,
+    right: 0,
+    backgroundColor: COLORS.surface,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 40,
+    maxHeight: 400,
+    marginBottom: 20,
+    width: '95%',
+    alignSelf: 'center',
+  },
+  binBottomSheetHandle: {
+    width: 40,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.border,
+    marginBottom: 16,
+    alignSelf: 'center',
+  },
+  binBottomSheetContent: { flexDirection: 'column', gap: 8 },
+  binBottomSheetTitle: { fontSize: 16, fontWeight: '700', color: COLORS.text },
+  binBottomSheetClose: { padding: 8, borderRadius: 10, backgroundColor: COLORS.bg, marginTop: 12 },
+  binBottomSheetCloseText: { color: COLORS.textMuted, fontWeight: '600' },
 });
