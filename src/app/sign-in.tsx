@@ -1,10 +1,10 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { authClient } from '@/lib/auth-client';
-import { COLORS } from '@/lib/constants';
+import { getThemeColors, COLORS } from '@/lib/constants';
 import { Field } from '@/components/ui/Field';
 
 export default function SignInScreen() {
@@ -13,6 +13,13 @@ export default function SignInScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const colorScheme = 'light'; // default, can be enhanced with Appearance later
+    const colors = getThemeColors(colorScheme as 'light' | 'dark');
+    // Re-apply styles when appearance changes
+    Object.assign(styles, { safe: { ...styles.safe, backgroundColor: colors.bg } });
+  }, []);
 
   async function submit() {
     setError(null);
@@ -82,3 +89,4 @@ const styles = StyleSheet.create({
   switchText: { textAlign: 'center', color: COLORS.textMuted, marginTop: 12 },
   switchLink: { color: COLORS.primary, fontWeight: '600' },
 });
+
