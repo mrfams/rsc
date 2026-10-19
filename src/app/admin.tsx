@@ -485,12 +485,13 @@ const styles = StyleSheet.create({
 
   tabs: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
   tab: {
-    borderRadius: 999,
+    borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 8,
     backgroundColor: COLORS.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
+    width: '100%',
   },
   tabActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   tabText: { fontSize: 13, fontWeight: '600', color: COLORS.text },
@@ -533,7 +534,7 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 12, fontWeight: '600', color: COLORS.text },
   chipTextActive: { color: '#fff' },
 
-  createRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-end' },
+  createRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-end', width: '100%' },
   tinyLabel: { fontSize: 11, color: COLORS.textMuted, marginBottom: 4 },
   input: {
     backgroundColor: COLORS.surface,
@@ -545,6 +546,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.text,
     minWidth: 60,
+    width: '100%',
   },
   addButton: {
     backgroundColor: COLORS.primary,
@@ -552,6 +554,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 12,
     alignItems: 'center',
+    width: '100%',
   },
   addText: { color: '#fff', fontWeight: '700' },
 

@@ -164,10 +164,11 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 13,
     alignItems: 'center',
+    width: '100%',
   },
   primaryButtonText: { color: '#fff', fontWeight: '700' },
-  secondaryButton: { alignItems: 'center', paddingVertical: 8 },
-  secondaryButtonText: { color: COLORS.primary, fontWeight: '600' },
+  secondaryButton: { alignItems: 'center', paddingVertical: 8, width: '100%' },
+  secondaryButtonText: { color: COLORS.primary, fontWeight: '600', textAlign: 'center' },
   userCard: {
     backgroundColor: COLORS.surface,
     borderRadius: 16,

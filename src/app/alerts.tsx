@@ -195,18 +195,20 @@ const styles = StyleSheet.create({
   authCard: { flexDirection: 'row', gap: 10, marginTop: 18, flexWrap: 'wrap', justifyContent: 'center' },
   primaryButton: {
     backgroundColor: COLORS.primary,
-    borderRadius: 999,
+    borderRadius: 12,
     paddingHorizontal: 20,
     paddingVertical: 12,
+    width: '100%',
   },
   primaryButtonText: { color: '#fff', fontWeight: '700' },
   secondaryButton: {
     backgroundColor: COLORS.surface,
     borderColor: COLORS.border,
     borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 999,
+    borderRadius: 12,
     paddingHorizontal: 20,
     paddingVertical: 12,
+    width: '100%',
   },
-  secondaryButtonText: { color: COLORS.text, fontWeight: '600' },
+  secondaryButtonText: { color: COLORS.text, fontWeight: '600', textAlign: 'center' },
 });

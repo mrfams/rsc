@@ -75,6 +75,7 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     alignItems: 'center',
     marginTop: 6,
+    width: '100%',
   },
   buttonDisabled: { opacity: 0.6 },
   buttonText: { color: '#fff', fontWeight: '700', fontSize: 16 },
