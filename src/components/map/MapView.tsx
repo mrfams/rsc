@@ -1,12 +1,9 @@
 /**
- * Native map: MapLibRE React Native (vector, keyless).
+ * Native map: MapLibre React Native (vector, keyless).
  *
- * v11 API notes:
- * - `Map` + `Camera` (initialViewState; re-centered via key remount).
- * - One generic `Layer` component with `type` (fill/line/…).
- * - GeoJSON polygons support holes → the outside-campus dimming mask works
- *   here just like the web Leaflet mask (expo-maps could not do this).
- * - Markers are `Marker` annotations (native views) with an onPress.
+ * Markers are real recycling pins drawn with React Native views. Campus labels
+ * are rendered as lightweight, non-interactive markers so building names stay
+ * visible regardless of the basemap's label density.
  */
 import {
   Camera,
@@ -16,13 +13,15 @@ import {
   Marker,
   UserLocation,
 } from '@maplibre/maplibre-react-native';
-import type { StyleSpecification, PressEvent } from '@maplibre/maplibre-react-native';
-import { useMemo } from 'react';
-import { StyleSheet, View, Image } from 'react-native';
+import type { StyleSpecification } from '@maplibre/maplibre-react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useMemo, useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 
-import type { Feature, Polygon, Position } from 'geojson';
-import { CAMPUS_CENTER, COLORS } from '@/lib/constants';
-import type { MapViewProps } from './types';
+import type { Feature, MultiPolygon, Polygon, Position } from 'geojson';
+import { CAMPUS_CENTER, CAMPUS_PLACES, DEFAULT_MAP_ZOOM } from '@/lib/constants';
+import { SHADOW } from '@/lib/theme';
+import type { MapLabel, MapMarker, MapPolygon, MapViewProps } from './types';
 
 export type { MapViewProps };
 
@@ -40,44 +39,129 @@ const SATELLITE_STYLE: StyleSpecification = {
       maxzoom: 19,
       attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
     },
+    places: {
+      type: 'raster',
+      tiles: [
+        'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+      ],
+      tileSize: 256,
+      maxzoom: 19,
+    },
   },
-  layers: [{ id: 'esri-imagery', type: 'raster', source: 'esri' }],
+  layers: [
+    { id: 'esri-imagery', type: 'raster', source: 'esri' },
+    { id: 'esri-places', type: 'raster', source: 'places' },
+  ],
 };
 
-function ringToGeoJSON(polygon: NonNullable<MapViewProps['polygon']>): Position[] {
+const DEFAULT_LABELS: MapLabel[] = CAMPUS_PLACES.map((place) => ({
+  id: place.name,
+  name: place.short,
+  latitude: place.latitude,
+  longitude: place.longitude,
+  priority: place.priority,
+}));
+
+function ringToGeoJSON(polygon: MapPolygon): Position[] {
   return polygon.map((p): Position => [p.longitude, p.latitude]);
+}
+
+function pinColor(marker: MapMarker): string {
+  return /^#[0-9a-fA-F]{6}$/.test(marker.color ?? '') ? (marker.color as string) : '#0E7C5A';
+}
+
+function MarkerBody({ marker }: { marker: MapMarker }) {
+  const color = pinColor(marker);
+  if ((marker.kind ?? 'bin') === 'numbered') {
+    return (
+      <View
+        style={[
+          styles.numberPin,
+          { backgroundColor: color },
+          marker.selected && styles.numberPinSelected,
+        ]}
+      >
+        <Text style={styles.numberText}>{marker.label ?? ''}</Text>
+      </View>
+    );
+  }
+
+  if (marker.kind === 'pin') {
+    return (
+      <View style={[styles.pinWrap, marker.selected && { transform: [{ scale: 1.16 }] }]}>
+        <View style={[styles.pinHead, { backgroundColor: color }]}>
+          <View style={styles.pinDot} />
+        </View>
+        <View style={[styles.pinTail, { borderTopColor: color }]} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.pinWrap, marker.selected && { transform: [{ scale: 1.16 }] }]}>
+      <View style={[styles.pinHead, { backgroundColor: color }]}>
+        <Ionicons name="trash" size={17} color="#FFFFFF" />
+      </View>
+      <View style={[styles.pinTail, { borderTopColor: color }]} />
+    </View>
+  );
+}
+
+function fitCenter(polygons: MapPolygon[] | undefined) {
+  if (!polygons?.length) return CAMPUS_CENTER;
+  const points = polygons.flat();
+  if (points.length === 0) return CAMPUS_CENTER;
+  const lat = points.reduce((sum, p) => sum + p.latitude, 0) / points.length;
+  const lng = points.reduce((sum, p) => sum + p.longitude, 0) / points.length;
+  return { latitude: lat, longitude: lng };
 }
 
 export default function MapView({
   markers,
   center = CAMPUS_CENTER,
+  zoom = DEFAULT_MAP_ZOOM,
   onPressMarker,
   onPressMap,
   showUserLocation = true,
   basemap = 'streets',
   polygon,
+  polygons,
   maskOutside = false,
+  labels = DEFAULT_LABELS,
+  fitToPolygon = false,
   style,
 }: MapViewProps) {
+  const [currentZoom, setCurrentZoom] = useState(zoom);
   const mapStyle = basemap === 'satellite' ? SATELLITE_STYLE : STREET_STYLE_URL;
 
-  // Campus + mask geometry. The mask is a world rectangle with the campus cut
-  // out — GeoJSON supports holes natively.
-  const campusGeoJSON = useMemo<Feature<Polygon> | null>(() => {
-    if (!polygon?.length) return null;
+  const rings: MapPolygon[] = useMemo(() => {
+    if (polygons?.length) return polygons;
+    if (polygon?.length) return [polygon];
+    return [];
+  }, [polygon, polygons]);
+
+  const viewCenter = useMemo(
+    () => (fitToPolygon ? fitCenter(rings) : center),
+    [fitToPolygon, rings, center],
+  );
+
+  const campusGeoJSON = useMemo<Feature<MultiPolygon> | null>(() => {
+    const valid = rings.filter((ring) => ring.length >= 3);
+    if (valid.length === 0) return null;
     return {
       type: 'Feature',
       properties: {},
       geometry: {
-        type: 'Polygon',
-        coordinates: [ringToGeoJSON(polygon)],
+        type: 'MultiPolygon',
+        coordinates: valid.map((ring) => [ringToGeoJSON(ring)]),
       },
     };
-  }, [polygon]);
+  }, [rings]);
 
   const maskGeoJSON = useMemo<Feature<Polygon> | null>(() => {
-    if (!polygon?.length || !maskOutside) return null;
-    const ring: Position[] = [
+    const valid = rings.filter((ring) => ring.length >= 3);
+    if (valid.length === 0 || !maskOutside) return null;
+    const world: Position[] = [
       [-180, 85],
       [180, 85],
       [180, -85],
@@ -87,27 +171,33 @@ export default function MapView({
     return {
       type: 'Feature',
       properties: {},
-      geometry: {
-        type: 'Polygon',
-        coordinates: [ring, ringToGeoJSON(polygon)],
-      },
+      geometry: { type: 'Polygon', coordinates: [world, ...valid.map(ringToGeoJSON)] },
     };
-  }, [polygon, maskOutside]);
+  }, [rings, maskOutside]);
+
+  const ordered = useMemo(
+    () => [...markers].sort((a, b) => Number(Boolean(a.selected)) - Number(Boolean(b.selected))),
+    [markers],
+  );
+
+  const visibleLabels = useMemo(
+    () => labels.filter((label) => currentZoom >= 15.5 || (label.priority ?? 1) === 1),
+    [labels, currentZoom],
+  );
 
   return (
     <Map
       style={[styles.container, style]}
       mapStyle={mapStyle}
       onPress={(event) => {
-        const press = event as { nativeEvent: PressEvent };
-        const [lng, lat] = press.nativeEvent.lngLat;
+        const [lng, lat] = event.nativeEvent.lngLat;
         onPressMap?.(lat, lng);
       }}
+      onRegionDidChange={(event) => setCurrentZoom(event.nativeEvent.zoom)}
     >
-      {/* initialViewState applies once; the key remounts recentre on updates */}
       <Camera
-        key={`${center.longitude.toFixed(5)},${center.latitude.toFixed(5)}`}
-        initialViewState={{ center: [center.longitude, center.latitude], zoom: 14.5 }}
+        key={`${viewCenter.longitude.toFixed(5)},${viewCenter.latitude.toFixed(5)},${zoom},${fitToPolygon ? rings.length : 0}`}
+        initialViewState={{ center: [viewCenter.longitude, viewCenter.latitude], zoom }}
       />
 
       {maskGeoJSON ? (
@@ -115,7 +205,7 @@ export default function MapView({
           <Layer
             id="outside-mask-fill"
             type="fill"
-            paint={{ 'fill-color': '#0F172A', 'fill-opacity': 0.35 }}
+            paint={{ 'fill-color': '#101413', 'fill-opacity': 0.26 }}
           />
         </GeoJSONSource>
       ) : null}
@@ -125,46 +215,38 @@ export default function MapView({
           <Layer
             id="campus-boundary-fill"
             type="fill"
-            paint={{ 'fill-color': '#0E7490', 'fill-opacity': 0.08 }}
+            paint={{ 'fill-color': '#0E7C5A', 'fill-opacity': 0.07 }}
           />
           <Layer
             id="campus-boundary-line"
             type="line"
-            paint={{ 'line-color': '#0E7490', 'line-width': 2, 'line-dasharray': [2, 2] }}
+            paint={{ 'line-color': '#0E7C5A', 'line-width': 2, 'line-dasharray': [2, 2] }}
           />
         </GeoJSONSource>
       ) : null}
 
-      {markers.map((marker) => (
+      {visibleLabels.map((label) => (
+        <Marker
+          key={`label-${label.id}`}
+          id={`label-${label.id}`}
+          lngLat={[label.longitude, label.latitude]}
+          anchor="center"
+        >
+          <View pointerEvents="none" style={styles.labelWrap}>
+            <Text style={styles.labelText}>{label.name}</Text>
+          </View>
+        </Marker>
+      ))}
+
+      {ordered.map((marker) => (
         <Marker
           key={marker.id}
           id={marker.id}
           lngLat={[marker.longitude, marker.latitude]}
+          anchor={(marker.kind ?? 'bin') === 'numbered' ? 'center' : 'bottom'}
           onPress={() => onPressMarker?.(marker.id)}
         >
-          <View
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              justifyContent: 'center',
-              alignItems: 'center',
-              overflow: 'hidden',
-            }}
-          >
-            <Image
-              source={require('./bin-icon.png')}
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: 6,
-                backgroundColor: marker.color ?? COLORS.primary,
-                borderWidth: 2,
-                borderColor: '#FFFFFF',
-              }}
-              resizeMode='contain'
-            />
-          </View>
+          <MarkerBody marker={marker} />
         </Marker>
       ))}
 
@@ -175,5 +257,48 @@ export default function MapView({
 
 const styles = StyleSheet.create({
   container: { flex: 1, overflow: 'hidden' },
-  binIcon: { width: 32, height: 32, borderRadius: 8, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
+  pinWrap: { alignItems: 'center' },
+  pinHead: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 2.5,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...SHADOW.md,
+  },
+  pinDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#FFFFFF' },
+  pinTail: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 5,
+    borderRightWidth: 5,
+    borderTopWidth: 7,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    marginTop: -1,
+  },
+  numberPin: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 2.5,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...SHADOW.md,
+  },
+  numberPinSelected: { transform: [{ scale: 1.22 }] },
+  numberText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
+  labelWrap: {
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: 'rgba(16,20,19,0.08)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    ...SHADOW.sm,
+  },
+  labelText: { fontSize: 10.5, fontWeight: '600', color: '#18211E' },
 });

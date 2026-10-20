@@ -1,37 +1,64 @@
 # EMU Bin Tracker
 
-Community map of recycling bins for Eastern Mediterranean University, built as a
-single Expo codebase: **web (PWA-ready) + native iOS/Android + API routes**, with
-Better Auth and a Neon Postgres database, deployed on Vercel.
+Community map of recycling bins for Eastern Mediterranean University, built as
+one Expo codebase: **web + native iOS/Android + API routes**, with Better Auth
+and a Neon Postgres database, deployed on Vercel.
 
-## What works
+## What is in the app
 
 | Area | Details |
 |---|---|
-| **Auth** | Email + password sign-up/sign-in restricted to campus emails (@emu.edu.tr by default), DB-backed sessions, sign-out — web **and** native (SecureStore cookie storage) |
-| **Map** | Web: Leaflet with keyless Esri street/satellite tiles; native: **MapLibre** (`@maplibre/maplibre-react-native`) with the keyless OpenFreeMap "Liberty" vector style + Esri satellite toggle; campus geofence polygon **and outside-campus dimming mask** on both platforms; admin-managed category filter chips |
-| **Reports** | Tap-to-place map pin, category picker, note, optional photo (≤ ~450 KB), campus-polygon geofence enforced server-side |
-| **Bin lifecycle** | Reports within 25 m (per category) merge into the same bin; **verification waves** promote a bin to `verified` after sight by 2 distinct members; members can flag bins **missing** (disputed); a new independent sighting clears it again |
-| **Trust** | `/api/me` computes trust score (15 pts per distinct bin + 3 per report, capped 100) shown on the profile |
-| **Moderation** | `/admin` panel (env `ADMIN_EMAILS` gate): list every bin incl. removed, force lifecycle status, delete bad reports |
-| **Server** | API routes: `/api/health`, `/api/bins` (+`/[id]`, `/[id]/dispute`), `/api/reports` (+`/[id]`, `?mine=1`), `/api/me`, `/api/photos/*`, `/api/admin/*`, `/api/auth/*` (Better Auth) |
-| **Safety** | Zod validation on all inputs, JPEG magic-byte check + size cap, unauthenticated/off-campus submissions rejected, SQL parameterised through Drizzle |
-| **Tests** | `node scripts/api-flow.mjs` — 13-step end-to-end flow incl. domain gate, verification wave, dispute, trust stats and admin gates |
+| **Map** | MapLibre on native, Leaflet on web. Correct EMU campus boundary from OpenStreetMap (relation 15583365), place/building labels, street/satellite basemaps with a places overlay on satellite, recycling-pin markers (no circles), campus filter chips |
+| **Bin cards** | Tapping a bin opens a Google-Maps-style card: desktop floating right panel, mobile anchored bottom sheet (tap the handle to expand). Place name, type, photo, **“I see it too” quick verification**, Directions, “This bin is gone”, moderation and sighting history — no navigation away from the map |
+| **Layout** | Desktop: persistent navigation rail, floating map filters and panels. Mobile: floating tab bar with a central Report action, safe-area aware, plus a slide-in drawer with account, activity and contact links |
+| **Feedback** | Every mutation reports back: a success dialog for meaningful actions (bin added, geofence saved, sighting verified) and a toast for lighter updates. Errors surface inline instead of failing silently |
+| **Report** | Three clear steps: tap the pin, choose a category, add a note/photo. Camera or library photo, client-side compression, offline queue, geofence enforced on the server |
+| **Auth** | One page with **Sign in / Create account** tabs. Any email can join; no campus-domain gate. Sessions work on web and native (SecureStore cookie) |
+| **Bin lifecycle** | Reports within 25 m (same category) merge into one bin; two distinct contributors verify it; members can flag a bin missing; a new sighting restores it |
+| **Profile** | Impact dashboard: trust score, reports, bins contributed, admin entry point and social/contact links |
+| **Alerts** | Activity on your own reports with All / Awaiting / Resolved filters; tapping an alert opens the bin card on the map |
+| **Admin** | A **hamburger-driven workspace** (Overview, Map studio, Bins, Bin types, People, Geofence) instead of a tab strip. Map studio pins, renames, retypes, moves and removes bins directly on the map with immediate boundary validation. Geofence editor has an explicit **Draw corners** mode (browsing never mutates the boundary), add/delete areas, numbered point editing, undo, reset to the real OSM boundary, and a confirm + success dialog on save |
+| **Server** | `/api/health`, `/api/bins` (+`/[id]`, `/[id]/dispute`), `/api/reports` (+`/[id]`, `?mine=1`), `/api/me`, `/api/config`, `/api/photos/*`, `/api/admin/*`, `/api/auth/*` |
+| **Safety** | Zod validation, JPEG magic-byte + size checks, auth and geofence enforcement on submissions, parameterised Drizzle queries |
 
-Backed up from the previous rewrite: `SPEC.md` and `ROADMAP.md` live in
-`C:\Users\asano\Desktop\RSC-backup` — verification waves, trust scoring,
-moderation, offline mode and push notifications are the planned next phases.
+### Geofence notes
+
+The old campus polygon was about 28 km north of EMU (in the sea). The app now
+uses the real OSM boundary (three rings: main campus, medical north, medical
+south) and self-heals a stored polygon whose centroid is more than 10 km from
+campus. Public bin queries hide rows outside the current boundary, so
+legacy/seed pins cannot scatter across the map. Saving in the editor writes to
+`app_config`, invalidates the public config query and takes effect immediately —
+no deploy. The editor refuses to save malformed rings and reports the reason.
+
+### Hydration + database notes
+
+Web routes are statically rendered, so the root layout renders a branded splash
+for the server pass and mounts the app after hydration. That keeps viewport- and
+session-dependent UI from producing React hydration errors or blank flashes.
+The Postgres pool listens for idle-client errors so a Neon network blip cannot
+crash the server process.
+
+### Contact links
+
+Defaults point at EMU Sustainability on Instagram and the EMU support WhatsApp
+line. Override them without code changes:
+
+```bash
+EXPO_PUBLIC_INSTAGRAM_URL=https://www.instagram.com/<your-handle>/
+EXPO_PUBLIC_WHATSAPP_URL=https://wa.me/<international-number>
+```
 
 ## Quick start
 
 ```bash
 npm install
-# .env already points DATABASE_URL at the shared Neon dev database
 npm run db:push       # sync Drizzle schema to Neon (idempotent)
-npm run web           # Expo dev server on :8081 — web UI + API both served here
+npm run seed          # categories, admin, 10 verified starter bins
+npm run web           # Expo dev server on :8081 — web UI + API
 ```
 
-Then run the API flow test against it:
+Then run the end-to-end API flow:
 
 ```bash
 node scripts/api-flow.mjs http://localhost:8081
@@ -40,84 +67,66 @@ node scripts/api-flow.mjs http://localhost:8081
 Useful checks:
 
 ```bash
-npx tsc --noEmit      # strict typecheck (also runs on CI)
-npx expo lint         # ESLint flat config from eslint-config-expo
-npx expo export -p web   # production web + API export into dist/
+npx tsc --noEmit          # strict typecheck
+npx expo lint             # ESLint flat config from eslint-config-expo
+npx expo export -p web    # production web + API export into dist/
+npm run seed              # categories, admin and starter bins inside the real campus
 ```
 
 ## Architecture
 
 ```
 ┌─ src/app ───────── screens (Expo Router: web + native from one source)
-│   map · sign-in · sign-up · report/new · report/[id] · profile
+│   map · auth · report/new · report/[id] · bins/[id] · profile · alerts · admin
 ├─ src/app/api ────── server routes (+api.ts) — never bundled into the client
-├─ src/components/map  MapView.tsx (native MapLibre) / MapView.web.tsx (Leaflet)
-├─ src/lib ─────────── shared client+server: validation (zod), constants,
-│                      auth-client, api-client (adds SecureStore cookie on native)
+├─ src/components ── AppChrome (rail/tab bar), Sidebar, bins/BinDetails,
+│                     map/MapView.tsx (MapLibre) / MapView.web.tsx (Leaflet),
+│                     ui/* design primitives
+├─ src/lib ─────────── shared client+server: validation, theme tokens, constants,
+│                      auth-client, api-client, use-me, offline, push
 ├─ src/lib/db ──────── Drizzle schema + pg pool (Better Auth + app tables)
 └─ api/index.ts ─────  Vercel adapter: routes every request to the Expo server
 ```
 
-- **One codebase, two map motors.** Metro resolves `MapView.web.tsx` on web and
+- **One codebase, two map engines.** Metro resolves `MapView.web.tsx` on web and
   `MapView.tsx` (MapLibre) on iOS/Android. Both share the same props in
-  `types.ts`.
+  `types.ts` and the same pin/geofence behaviour.
 - **Server/client isolation.** Secrets only exist in files imported by `+api.ts`
   route handlers — Metro strips them from client bundles.
 - **Photos degrade gracefully.** With `BLOB_READ_WRITE_TOKEN` present (Vercel),
-  they upload to Vercel Blob; without it, they land in `./.data/uploads` and are
-  served locally — zero external accounts needed to develop.
+  uploads go to Vercel Blob; without it they land in `./.data/uploads` and are
+  served locally.
 - **Sessions.** Better Auth manages `user`/`session`/`account`/`verification`
-  tables through the Drizzle adapter; the native client persists cookies in
-  SecureStore and re-attaches them via the Expo plugin.
+  tables through the Drizzle adapter. Localhost and Expo dev origins are
+  trusted in development; production/preview origins are derived from
+  `BETTER_AUTH_URL`, `APP_URL` and `VERCEL_URL`.
 
 ## Deploy (Vercel + Neon)
-
-Already wired: pushing to GitHub deploys automatically (Expo project on Vercel).
 
 1. **Environment variables** (project settings):
    - `DATABASE_URL` — Neon pooled connection string
    - `BETTER_AUTH_SECRET` — random 32+ chars
    - `BETTER_AUTH_URL` — production URL, e.g. `https://<project>.vercel.app`
    - `ADMIN_EMAILS` — comma-separated moderator emails (enables `/admin`)
-   - `ALLOWED_EMAIL_DOMAINS` — optional, defaults to `emu.edu.tr`
    - `BLOB_READ_WRITE_TOKEN` — optional (photos), via Vercel Blob integration
-2. **Native apps** need the deployed URL baked in: set
-   `EXPO_PUBLIC_API_URL` to the production origin and build via
-   `bunx eas build` (an `eas.json` can be added when app-store first).
+   - `EXPO_PUBLIC_INSTAGRAM_URL`, `EXPO_PUBLIC_WHATSAPP_URL` — optional contact links
+2. **Native apps** need the deployed URL baked in: set `EXPO_PUBLIC_API_URL` to
+   the production origin and build with EAS.
 
 ### Native map note
 
-Both platforms use **MapLibre** (`@maplibre/maplibre-react-native`) — no API
-key, no Google billing, no credit card. Street tiles come from the free
-OpenFreeMap "Liberty" style (Google-Maps-like vector look); the satellite
-toggle swaps to Esri World Imagery raster tiles. The map needs a development
-build (`npx expo run:android` / EAS build) — **Expo Go cannot render it**
-because it is a native module.
+Both platforms use **MapLibre** — no API key, no Google billing. Street tiles
+come from the free OpenFreeMap "Liberty" style; satellite uses Esri World
+Imagery with the places overlay. The map needs a development build
+(`npx expo run:android` / EAS build); Expo Go cannot render the native module.
 
 ## Data model
 
 - `user`, `session`, `account`, `verification` — Better Auth core schema
-  (`src/lib/db/auth-schema.ts`)
 - `bins` — id, category, lat/lng, area, status, report_count
 - `reports` — id, bin → user, lat/lng, note, photo_path, created_at
+- `categories` — slug, name, colour, emoji, active
+- `app_config` — JSON settings such as the campus geofence
+- `push_tokens` — Expo push tokens per user
 
 Schema lives in `src/lib/db/schema.ts`; `npm run db:push` applies it.
-
-## Known gaps (next phases per ROADMAP.md)
-
-- Marker clustering on the map for very large datasets
-- Offline queue + service-worker caching for the web PWA (report queue done,
-  full map cache pending)
-- Dispute/photo similarity verification beyond the wave count
-
-## Native build (EAS)
-
-1. `bunx eas-cli login` (free Expo account) → `bunx eas-cli init` (creates
-   `eas.json` and wires `extra.eas.projectId` into `app.json` — needed for
-   push tokens). Already done: project `0d2ec211-da63-4d5e-aa1a-55a481286310`.
-2. Build a development client: set `EXPO_PUBLIC_API_URL` to the server you
-   want the app to talk to, then `bunx eas-cli build --profile development
-   --platform android` (or `npx expo run:android` on a machine with the SDK).
-   Install the produced APK on a phone → sign in → push tokens register
-   automatically.
-3. No Google Maps key is required anywhere — the native map is MapLibre.

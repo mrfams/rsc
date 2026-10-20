@@ -9,9 +9,9 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 import { db } from '@/lib/db';
-import { haversine, isInsideCampus } from '@/lib/geo';
+import { haversine, isInsideCampus, placeNameFor } from '@/lib/geo';
 import { isReportableCategory } from '@/lib/categories';
-import { getCampusPolygon } from '@/lib/campus-config';
+import { getCampusPolygons } from '@/lib/campus-config';
 import { bins, reports, type BinCategory, type BinStatus } from '@/lib/db/schema';
 import { sendToUsers } from '@/lib/push';
 import type { ReportInput } from '@/lib/validation';
@@ -28,6 +28,8 @@ export const MIN_VERIFY_CONTRIBUTORS = 2;
 export type BinDto = {
   id: string;
   category: BinCategory;
+  /** Human place name, e.g. "DAU 3 Dormitory". */
+  name: string | null;
   lat: number;
   lng: number;
   area: string | null;
@@ -64,6 +66,7 @@ function photoToUrl(photoPath: string | null): string | null {
 function mapBin(row: {
   id: string;
   category: BinCategory;
+  name: string | null;
   lat: number;
   lng: number;
   area: string | null;
@@ -107,6 +110,7 @@ function mapReport(report: {
 const sqlBins = {
   id: bins.id,
   category: bins.category,
+  name: bins.name,
   lat: bins.lat,
   lng: bins.lng,
   area: bins.area,
@@ -116,15 +120,24 @@ const sqlBins = {
   updatedAt: bins.updatedAt,
 };
 
-/** Public map data. */
+/**
+ * Public map data. Bins outside the current campus geofence are hidden so a
+ * stale/legacy polygon or an imported dataset can never scatter pins across
+ * the sea. Admin moderation still lists every row.
+ */
 export async function listBins(): Promise<BinDto[]> {
-  const rows = await db
-    .select(sqlBins)
-    .from(bins)
-    .where(sql`${bins.status} <> 'removed'`)
-    .orderBy(desc(bins.createdAt));
+  const [rows, campusPolygons] = await Promise.all([
+    db
+      .select(sqlBins)
+      .from(bins)
+      .where(sql`${bins.status} <> 'removed'`)
+      .orderBy(desc(bins.createdAt)),
+    getCampusPolygons(),
+  ]);
 
-  return rows.map(mapBin);
+  return rows
+    .filter((row) => isInsideCampus(row.lat, row.lng, campusPolygons))
+    .map(mapBin);
 }
 
 /** Admin-only: every bin including removed ones, for moderation. */
@@ -192,8 +205,8 @@ export async function createReport(
   user: { id: string; email: string },
   input: ReportInput,
 ): Promise<ReportDto> {
-  const [campusPolygon] = await Promise.all([getCampusPolygon()]);
-  if (!isInsideCampus(input.lat, input.lng, campusPolygon)) {
+  const campusPolygons = await getCampusPolygons();
+  if (!isInsideCampus(input.lat, input.lng, campusPolygons)) {
     throw new Response('Bins must be inside the highlighted campus boundary', {
       status: 422,
     });
@@ -203,15 +216,32 @@ export async function createReport(
   }
 
   const photoPath = input.photoBase64 ? await storePhoto(input.photoBase64) : null;
+  const suggestedName =
+    input.name?.trim() || placeNameFor({ latitude: input.lat, longitude: input.lng }) || null;
 
+  const nearbyBinId = await findNearbyBin(input, input.category, BIN_LINK_RADIUS_M);
   const binId =
-    (await findNearbyBin(input, input.category, BIN_LINK_RADIUS_M)) ??
+    nearbyBinId ??
     (
       await db
         .insert(bins)
-        .values({ category: input.category, lat: input.lat, lng: input.lng })
+        .values({
+          category: input.category,
+          name: suggestedName,
+          lat: input.lat,
+          lng: input.lng,
+        })
         .returning({ id: bins.id })
     )[0].id;
+
+  // A reported place name is useful even when matching an existing bin that
+  // was created before names existed.
+  if (nearbyBinId && suggestedName) {
+    await db
+      .update(bins)
+      .set({ name: sql`coalesce(${bins.name}, ${suggestedName})` })
+      .where(eq(bins.id, nearbyBinId));
+  }
 
   const inserted = (
     await db
@@ -354,6 +384,70 @@ export async function setBinStatus(binId: string, status: BinStatus): Promise<Bi
     .set({ status, updatedAt: new Date() })
     .where(eq(bins.id, binId))
     .returning(sqlBins);
+  return updated[0] ? mapBin(updated[0]) : null;
+}
+
+/** Admin: create a named bin directly from the map. */
+export async function createBinByAdmin(input: {
+  name: string;
+  category: string;
+  lat: number;
+  lng: number;
+  status?: BinStatus;
+}): Promise<BinDto | null> {
+  if (!(await isReportableCategory(input.category))) return null;
+  const polygons = await getCampusPolygons();
+  if (!isInsideCampus(input.lat, input.lng, polygons)) {
+    throw new Response('A bin must be placed inside the campus boundary', { status: 422 });
+  }
+  const inserted = await db
+    .insert(bins)
+    .values({
+      name: input.name.trim() || null,
+      category: input.category,
+      lat: input.lat,
+      lng: input.lng,
+      status: input.status ?? 'verified',
+    })
+    .returning(sqlBins);
+  return inserted[0] ? mapBin(inserted[0]) : null;
+}
+
+/** Admin: rename, retype or move an existing bin. */
+export async function updateBinDetails(
+  binId: string,
+  input: {
+    name?: string | null;
+    category?: string;
+    lat?: number;
+    lng?: number;
+    status?: BinStatus;
+  },
+): Promise<BinDto | null> {
+  if (input.category && !(await isReportableCategory(input.category))) return null;
+
+  if (input.lat != null && input.lng != null) {
+    const polygons = await getCampusPolygons();
+    if (!isInsideCampus(input.lat, input.lng, polygons)) {
+      throw new Response('A bin must be placed inside the campus boundary', { status: 422 });
+    }
+  }
+
+  const patch: {
+    name?: string | null;
+    category?: string;
+    lat?: number;
+    lng?: number;
+    status?: BinStatus;
+    updatedAt: Date;
+  } = { updatedAt: new Date() };
+  if (input.name !== undefined) patch.name = input.name?.trim() || null;
+  if (input.category !== undefined) patch.category = input.category;
+  if (input.lat !== undefined) patch.lat = input.lat;
+  if (input.lng !== undefined) patch.lng = input.lng;
+  if (input.status !== undefined) patch.status = input.status;
+
+  const updated = await db.update(bins).set(patch).where(eq(bins.id, binId)).returning(sqlBins);
   return updated[0] ? mapBin(updated[0]) : null;
 }
 

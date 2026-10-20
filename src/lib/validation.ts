@@ -8,6 +8,8 @@ export const reportSchema = z.object({
   lng: z.number().min(-180).max(180),
   /** Category slug; validated against the active catalogue server-side. */
   category: z.string().min(1).max(32).regex(/^[a-z0-9_]+$/),
+  /** Optional place name; the server falls back to the nearest campus place. */
+  name: z.string().max(80).optional(),
   note: z.string().max(500).optional(),
   /** data:image/jpeg;base64,… — client-compressed, ≤ ~400 KB decoded. */
   photoBase64: z.string().max(600_000).optional(),
@@ -33,6 +35,31 @@ export function categoryEmoji(slug: string): string {
 }
 
 export const binStatusSchema = z.enum(binStatusEnum.enumValues);
+
+export const adminBinCreateSchema = z.object({
+  name: z.string().min(1).max(80),
+  category: z.string().min(1).max(32).regex(/^[a-z0-9_]+$/),
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+  status: binStatusSchema.optional(),
+});
+
+export const adminBinUpdateSchema = z
+  .object({
+    name: z.string().max(80).nullable().optional(),
+    category: z.string().min(1).max(32).regex(/^[a-z0-9_]+$/).optional(),
+    lat: z.number().min(-90).max(90).optional(),
+    lng: z.number().min(-180).max(180).optional(),
+    status: binStatusSchema.optional(),
+  })
+  .refine(
+    (value) =>
+      value.name !== undefined ||
+      value.category !== undefined ||
+      value.status !== undefined ||
+      (value.lat !== undefined && value.lng !== undefined),
+    { message: 'Nothing to update' },
+  );
 export type BinStatusInput = z.infer<typeof binStatusSchema>;
 export type BinStatus = (typeof binStatusEnum.enumValues)[number];
 export { binStatusEnum };

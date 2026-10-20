@@ -1,11 +1,19 @@
+import { Ionicons } from '@expo/vector-icons';
+import { useQuery } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
+import MapView from '@/components/map/MapView';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { StatusPill } from '@/components/ui/StatusPill';
 import { api } from '@/lib/api-client';
-import { COLORS } from '@/lib/constants';
-import { categoryEmoji, BIN_STATUS_LABEL } from '@/lib/validation';
+import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
+import { RADIUS, timeAgo } from '@/lib/theme';
+import { categoryEmoji } from '@/lib/validation';
 
 type ReportDetail = {
   id: string;
@@ -18,9 +26,14 @@ type ReportDetail = {
   bin: {
     id: string;
     category: string;
-    status: keyof typeof BIN_STATUS_LABEL;
+    name: string | null;
+    status: string;
     reportCount: number;
   };
+};
+
+type Config = {
+  categories: { slug: string; name: string; color: string; emoji: string; active: boolean }[];
 };
 
 export default function ReportDetailScreen() {
@@ -31,113 +44,155 @@ export default function ReportDetailScreen() {
     queryKey: ['report', id],
     queryFn: () => api<ReportDetail>(`/api/reports/${id}`),
     enabled: Boolean(id),
-    retry: (count, err) => (err as { status?: number }).status !== 404 && count < 3,
+    retry: (count, err) => (err as { status?: number }).status !== 404 && count < 2,
+  });
+
+  const { data: config } = useQuery({
+    queryKey: ['config'],
+    queryFn: () => api<Config>('/api/config'),
+    staleTime: 60_000,
   });
 
   if (isLoading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-      </View>
+      <SafeAreaView style={[styles.safe, styles.center]}>
+        <ActivityIndicator color={COLORS.primary} />
+      </SafeAreaView>
     );
   }
 
   if (error || !data) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.errorText}>Report not found</Text>
-        <Pressable onPress={() => router.back()} style={styles.button}>
-          <Text style={styles.buttonText}>Go back</Text>
-        </Pressable>
-      </View>
+      <SafeAreaView style={[styles.safe, styles.center]}>
+        <Ionicons name="help-circle-outline" size={36} color={COLORS.textMuted} />
+        <Text style={styles.errorText}>This report is not available</Text>
+        <Button
+          title="Back to the map"
+          onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}
+        />
+      </SafeAreaView>
     );
   }
 
-  const date = new Date(data.createdAt);
+  const category =
+    config?.categories.find((c) => c.slug === data.bin.category) ?? {
+      name: data.bin.category.replace(/_/g, ' '),
+      color: CATEGORY_COLORS[data.bin.category] ?? COLORS.primary,
+      emoji: categoryEmoji(data.bin.category),
+    };
+  const color = category.color ?? COLORS.primary;
+
   return (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-      <Pressable onPress={() => router.back()} style={styles.backRow} hitSlop={8}>
-        <Text style={styles.backLink}>← Back</Text>
-      </Pressable>
+    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <PageHeader
+        title={data.bin.name?.trim() || `${category.name} bin`}
+        subtitle={`Sighting ${timeAgo(data.createdAt)} · ${data.bin.reportCount} total`}
+        showBack
+        onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))}
+      />
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        {data.photoUrl ? (
+          <Image source={{ uri: data.photoUrl }} style={styles.photo} contentFit="cover" />
+        ) : (
+          <View style={[styles.photo, styles.photoEmpty, { backgroundColor: `${color}12` }]}>
+            <Text style={{ fontSize: 44 }}>{category.emoji}</Text>
+            <Text style={styles.photoHint}>No photo attached to this sighting</Text>
+          </View>
+        )}
 
-      <Text style={styles.title}>
-        {categoryEmoji(data.bin.category)} {data.bin.category} bin
-      </Text>
-      <Text style={styles.subtitle}>
-        {BIN_STATUS_LABEL[data.bin.status]} · {date.toLocaleString()}
-      </Text>
-
-      {data.photoUrl ? (
-        <Image source={{ uri: data.photoUrl }} style={styles.photo} contentFit="cover" />
-      ) : (
-        <View style={[styles.photo, styles.photoPlaceholder]}>
-          <Text style={styles.photoPlaceholderText}>No photo</Text>
+        <View style={styles.pillRow}>
+          <StatusPill status={data.bin.status} />
+          <View style={styles.categoryPill}>
+            <Text style={styles.categoryPillText}>
+              {category.emoji} {category.name}
+            </Text>
+          </View>
         </View>
-      )}
 
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Location</Text>
-        <Text style={styles.cardValue}>
-          {data.lat.toFixed(6)}, {data.lng.toFixed(6)}
-        </Text>
-        <Text style={styles.cardValue}>
-          {data.bin.reportCount} report{data.bin.reportCount === 1 ? '' : 's'} · bin{' '}
-          {data.bin.id.slice(0, 8)}
-        </Text>
-      </View>
+        <Card style={{ gap: 8 }}>
+          <Text style={styles.cardLabel}>Note</Text>
+          <Text style={styles.note}>{data.note?.trim() || 'No note added.'}</Text>
+        </Card>
 
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Note</Text>
-        <Text style={styles.cardValue}>{data.note ?? 'No note provided.'}</Text>
-      </View>
-    </ScrollView>
+        <Card padded={false}>
+          <View style={styles.mapWrap}>
+            <MapView
+              markers={[
+                {
+                  id: data.id,
+                  latitude: data.lat,
+                  longitude: data.lng,
+                  kind: 'pin',
+                  color,
+                  selected: true,
+                },
+              ]}
+              center={{ latitude: data.lat, longitude: data.lng }}
+              zoom={17}
+              showUserLocation={false}
+              style={styles.map}
+            />
+          </View>
+          <View style={styles.mapFooter}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cardLabel}>Location</Text>
+              <Text style={styles.mapHint}>Open the map to see nearby bins and directions.</Text>
+            </View>
+            <Pressable
+              onPress={() =>
+                router.navigate({ pathname: '/', params: { bin: data.binId } })
+              }
+              style={({ pressed }) => [styles.mapButton, pressed && { opacity: 0.7 }]}
+            >
+              <Ionicons name="map-outline" size={16} color={COLORS.primary} />
+              <Text style={styles.mapButtonText}>Open in map</Text>
+            </Pressable>
+          </View>
+        </Card>
+
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: COLORS.bg },
-  content: { padding: 24, gap: 20, paddingBottom: 120 },
-  center: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 20,
-  },
-  backRow: { paddingVertical: 12, alignSelf: 'flex-start' },
-  backLink: { fontSize: 17, color: COLORS.primary, fontWeight: '600' },
-  title: { fontSize: 30, fontWeight: '700', color: COLORS.text },
-  subtitle: { fontSize: 15, color: COLORS.textMuted, marginTop: -4 },
-  photo: {
-    width: '100%',
-    aspectRatio: 4 / 3,
-    borderRadius: 20,
-    backgroundColor: COLORS.border,
-  },
-  photoPlaceholder: { alignItems: 'center', justifyContent: 'center' },
-  photoPlaceholderText: { color: COLORS.textMuted },
-  card: {
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  center: { alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24 },
+  scroll: { padding: 20, gap: 13, paddingBottom: 120, width: '100%', maxWidth: 820, alignSelf: 'center' },
+  errorText: { fontSize: 17, fontWeight: '700', color: COLORS.text },
+  photo: { width: '100%', aspectRatio: 16 / 10, borderRadius: RADIUS.lg, backgroundColor: COLORS.surfaceAlt },
+  photoEmpty: { alignItems: 'center', justifyContent: 'center', gap: 8 },
+  photoHint: { fontSize: 12, color: COLORS.textMuted },
+  pillRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  categoryPill: {
     backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    padding: 20,
-    gap: 8,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 999,
+    borderWidth: 1,
     borderColor: COLORS.border,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
-  cardTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textMuted,
+  categoryPillText: { fontSize: 11.5, fontWeight: '700', color: COLORS.text },
+  cardLabel: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
+    color: COLORS.textMuted,
   },
-  cardValue: { fontSize: 17, color: COLORS.text },
-  errorText: { fontSize: 19, color: COLORS.danger, fontWeight: '600' },
-  button: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 12,
-    paddingHorizontal: 22,
-    paddingVertical: 12,
-    width: '100%',
+  note: { fontSize: 15, lineHeight: 22, color: COLORS.text },
+  mapWrap: { height: 220, backgroundColor: COLORS.surfaceAlt },
+  map: { flex: 1 },
+  mapFooter: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
+  mapHint: { fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
+  mapButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: COLORS.primarySoft,
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
   },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+  mapButtonText: { fontSize: 12, fontWeight: '700', color: COLORS.primary },
 });

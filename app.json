@@ -4,7 +4,7 @@
     "slug": "rscemu",
     "version": "1.0.0",
     "scheme": "rsc",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -38,7 +38,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow EMU Bin Tracker to add a photo of the bin you found."
+          "photosPermission": "Allow EMU Bin Tracker to add a photo of the bin you found.",
+          "cameraPermission": "Allow EMU Bin Tracker to take a photo of the bin you found."
         }
       ],
       "@maplibre/maplibre-react-native"

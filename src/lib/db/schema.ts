@@ -52,6 +52,8 @@ export const bins = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     /** FK → categories.slug (validated at write time; no cascade so history is safe). */
     category: text('category').notNull().references((): AnyPgColumn => categories.slug),
+    /** Human place name, e.g. "DAU 3 Dormitory" or "Outside the library". */
+    name: text('name'),
     lat: doublePrecision('lat').notNull(),
     lng: doublePrecision('lng').notNull(),
     area: text('area'),

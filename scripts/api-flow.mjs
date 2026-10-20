@@ -35,15 +35,16 @@ function log(name, r) {
 }
 
 function expect(name, ok, body) {
-  steps.push(`${ok ? 'PASS' : 'FAIL'} ${name}${ok ? '' : ' ← ' + JSON.stringify(body).slice(0, 200)}`);
+  const detail = body === undefined ? 'undefined' : JSON.stringify(body)?.slice(0, 200) ?? String(body);
+  steps.push(`${ok ? 'PASS' : 'FAIL'} ${name}${ok ? '' : ' ← ' + detail}`);
 }
 
-// Domain gate: a non-campus email must be rejected by Better Auth.
-const badDomain = await req('/api/auth/sign-up/email', {
+// Open sign-up: any email domain is accepted (no campus-email gate).
+const openSignup = await req('/api/auth/sign-up/email', {
   method: 'POST',
-  body: JSON.stringify({ name: 'Bad Domain', email: emailWrongDomain, password: 'FlowPass123' }),
+  body: JSON.stringify({ name: 'Open Signup', email: emailWrongDomain, password: 'FlowPass123' }),
 });
-expect('domain-gate-rejected', badDomain.status >= 400, badDomain);
+expect('open-signup-accepted', openSignup.status < 400, openSignup);
 
 const signup = await req('/api/auth/sign-up/email', {
   method: 'POST',
@@ -63,7 +64,7 @@ const signedCookie = cookie;
 
 const report = await req('/api/reports', {
   method: 'POST',
-  body: JSON.stringify({ lat: 35.3786, lng: 33.9422, category: 'glass', note: 'api flow test' }),
+  body: JSON.stringify({ lat: 35.14472, lng: 33.90788, category: 'glass', note: 'api flow test' }),
 });
 log('create-report', report);
 
@@ -71,7 +72,7 @@ log('create-report', report);
 cookie = null;
 const unauth = await req('/api/reports', {
   method: 'POST',
-  body: JSON.stringify({ lat: 35.3786, lng: 33.9422, category: 'glass' }),
+  body: JSON.stringify({ lat: 35.14472, lng: 33.90788, category: 'glass' }),
 });
 log(
   'unauthenticated-rejected',
@@ -114,7 +115,7 @@ log('sign-up-second', signupB);
 
 const confirm = await req('/api/reports', {
   method: 'POST',
-  body: JSON.stringify({ lat: 35.37868, lng: 33.94224, category: 'glass', note: 'confirm sighting' }),
+  body: JSON.stringify({ lat: 35.14477, lng: 33.90783, category: 'glass', note: 'confirm sighting' }),
 });
 log('create-report-second', confirm);
 
@@ -163,5 +164,83 @@ const pushOk = await req('/api/push/register', {
   }),
 });
 expect('push-register-valid', pushOk.status === 200 && pushOk.body?.registered === true, pushOk.body);
+
+// --- Campus config: full multipolygon is exposed ---
+const publicConfig = await req('/api/config');
+expect(
+  'config-multipolygon',
+  publicConfig.status === 200 &&
+    Array.isArray(publicConfig.body?.campusPolygons) &&
+    publicConfig.body.campusPolygons.length >= 3 &&
+    publicConfig.body.campusPolygons[0].length > 30,
+  {
+    rings: publicConfig.body?.campusPolygons?.length,
+    points: publicConfig.body?.campusPolygons?.[0]?.length,
+  },
+);
+
+// --- Admin map studio: sign in, name a bin, move it, remove it ---
+const adminEmail = process.env.SEED_ADMIN_EMAIL ?? 'ft@rsc.com';
+const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? 'ft@rsc123';
+cookie = null;
+const adminLogin = await req('/api/auth/sign-in/email', {
+  method: 'POST',
+  body: JSON.stringify({ email: adminEmail, password: adminPassword }),
+});
+expect('admin-sign-in', adminLogin.status < 400, adminLogin.body);
+
+const adminMe = await req('/api/me');
+expect('admin-flag', adminMe.status === 200 && adminMe.body?.isAdmin === true, adminMe.body);
+
+const campusAdmin = await req('/api/admin/campus');
+expect(
+  'admin-campus-multipolygon',
+  campusAdmin.status === 200 &&
+    Array.isArray(campusAdmin.body?.campusPolygons) &&
+    campusAdmin.body.campusPolygons.length >= 3,
+  campusAdmin.body?.campusPolygons?.length,
+);
+
+const createdBin = await req('/api/admin/bins', {
+  method: 'POST',
+  body: JSON.stringify({
+    name: 'API Test Bin',
+    category: 'glass',
+    lat: 35.14472,
+    lng: 33.90788,
+    status: 'verified',
+  }),
+});
+expect(
+  'admin-create-named-bin',
+  createdBin.status === 201 && createdBin.body?.name === 'API Test Bin',
+  createdBin.body,
+);
+
+if (createdBin.body?.id) {
+  const renamed = await req(`/api/admin/bins/${createdBin.body.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      name: 'API Test Bin Renamed',
+      lat: 35.14475,
+      lng: 33.9079,
+      status: 'disputed',
+    }),
+  });
+  expect(
+    'admin-edit-named-bin',
+    renamed.status === 200 &&
+      renamed.body?.name === 'API Test Bin Renamed' &&
+      renamed.body?.status === 'disputed' &&
+      Math.abs(renamed.body?.lat - 35.14475) < 1e-6,
+    renamed.body,
+  );
+
+  const removed = await req(`/api/admin/bins/${createdBin.body.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'removed' }),
+  });
+  expect('admin-remove-bin', removed.status === 200 && removed.body?.status === 'removed', removed.body);
+}
 
 console.log(steps.join('\n'));

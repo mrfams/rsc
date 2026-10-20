@@ -1,20 +1,15 @@
 /**
- * AppChrome — shared app furniture for phones, tablets and desktop web:
+ * AppChrome — shared app furniture for phones, tablets and desktop web.
  *
- * - <AppShell>   renders the routed screen plus a floating bottom navigation
- *                bar on phones and tablets. Hidden on auth/report modals and
- *                on wide desktop web (the hamburger drawer covers those).
- * - <MenuButton> the ☰ button that opens the navigation drawer.
- *
- * The last nav slot is context-aware: admins get "Admin", members get
- * "Profile" (everything is also reachable from the drawer).
+ * Desktop (>=1024px web): a persistent navigation sidebar. The content fills
+ * the remaining width, so map/filters/panels behave like a real desktop app.
+ * Mobile/tablet: a floating, safe-area-aware tab bar. The drawer is still
+ * available from the map for contact, account and secondary actions.
  */
 import { Ionicons } from '@expo/vector-icons';
-import { useQuery } from '@tanstack/react-query';
-import { Link, usePathname } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { router, usePathname, type Href } from 'expo-router';
+import { useState } from 'react';
 import {
-  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -24,302 +19,383 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { authClient, useSession } from '@/lib/auth-client';
-import { api } from '@/lib/api-client';
+import Sidebar from '@/components/Sidebar';
+import { Button } from '@/components/ui/Button';
+import { SocialLinks } from '@/components/ui/SocialLinks';
+import { useSession } from '@/lib/auth-client';
 import { COLORS } from '@/lib/constants';
+import { initials, RADIUS, SHADOW } from '@/lib/theme';
+import { useHydrated } from '@/lib/use-hydrated';
+import { useMe } from '@/lib/use-me';
 
-type Me = {
-  user: { name: string; email: string };
-  isAdmin: boolean;
-};
-
-/** Routes where the bottom bar would overlap a full-screen modal flow. */
-const NAVLESS_ROUTES = ['/sign-in', '/sign-up', '/report/new'];
-
-/** Desktop breakpoint — bottom bar phones/tablets only (web). */
 const WIDE_BREAKPOINT = 1024;
-const isWideWeb = (width: number) => width >= WIDE_BREAKPOINT;
+export const DESKTOP_SIDEBAR_WIDTH = 268;
+
+/** Full-screen flows: no tab bar and no desktop sidebar. */
+const IMMERSIVE_ROUTES = ['/sign-in', '/sign-up', '/report/new'];
+const isImmersive = (pathname: string) =>
+  IMMERSIVE_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`));
 
 type NavItem = {
   key: string;
-  href: string;
+  href: Href;
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
 };
 
-/** Map → Report → My Reports → Alerts → (Admin | Profile). */
-function buildNavItems(isAdmin: boolean): NavItem[] {
+function navItems(isAdmin: boolean): NavItem[] {
   return [
-    { key: 'map', href: '/', label: 'Map', icon: 'map' },
-    { key: 'report', href: '/report/new', label: 'Report', icon: 'add-circle' },
-    { key: 'my-reports', href: '/profile', label: 'My Reports', icon: 'document-text' },
-    { key: 'alerts', href: '/alerts', label: 'Alerts', icon: 'notifications' },
+    { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },
+    { key: 'alerts', href: '/alerts', label: 'Alerts', icon: 'notifications-outline' },
     isAdmin
-      ? { key: 'admin', href: '/admin', label: 'Admin', icon: 'shield' }
-      : { key: 'profile', href: '/profile', label: 'Profile', icon: 'person' },
+      ? { key: 'admin', href: '/admin', label: 'Admin', icon: 'shield-checkmark-outline' }
+      : { key: 'profile', href: '/profile', label: 'Profile', icon: 'person-outline' },
   ];
 }
 
-/** Human-friendly menu entries for the drawer. */
-const DRAWER_ITEMS: NavItem[] = [
-  { key: 'map', href: '/', label: 'Map', icon: 'map' },
-  { key: 'report', href: '/report/new', label: 'Report bin', icon: 'add-circle' },
-  { key: 'my-reports', href: '/profile', label: 'My reports', icon: 'document-text' },
-  { key: 'alerts', href: '/alerts', label: 'Alerts', icon: 'notifications' },
-  { key: 'admin', href: '/admin', label: 'Admin', icon: 'shield' },
-  { key: 'profile', href: '/profile', label: 'Profile', icon: 'person' },
-];
-
-function isActive(pathname: string, item: NavItem): boolean {
-  if (item.href === '/') return pathname === '/';
-  // "My reports" and "Profile" share /profile — never force-highlight both.
-  if (item.key === 'my-reports' && pathname === '/profile') return false;
-  return pathname === item.href || pathname.startsWith(`${item.href}/`);
+function active(pathname: string, item: NavItem): boolean {
+  if (item.key === 'map') return pathname === '/' || pathname === '/map';
+  const href = String(item.href);
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export function AppShell({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export function AppShell({ children }: { children: React.ReactNode }) {
   const { width } = useWindowDimensions();
+  const hydrated = useHydrated();
   const pathname = usePathname() ?? '/';
-  const isModal = NAVLESS_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`));
-  const showBar = Platform.OS !== 'web' || !isWideWeb(width);
+  const desktop = hydrated && Platform.OS === 'web' && width >= WIDE_BREAKPOINT;
 
-  if (isModal) return <View style={styles.shell}>{children}</View>;
+  if (isImmersive(pathname)) {
+    return <View style={styles.shell}>{children}</View>;
+  }
+
+  if (desktop) {
+    return (
+      <View style={styles.desktopShell}>
+        <DesktopSidebar />
+        <View style={styles.desktopContent}>{children}</View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.shell}>
       {children}
-      {showBar ? <BottomNav /> : null}
+      <BottomNav />
     </View>
   );
 }
 
-/**
- * Bottom navigation bar for phones and tablets. Overlays content with an
- * elevated translucent background; safe-area padded.
- */
+/* ------------------------------ Desktop rail ------------------------------ */
+
+export function DesktopSidebar() {
+  const pathname = usePathname() ?? '/';
+  const { data: session } = useSession();
+  const { data: me } = useMe();
+  const isAdmin = me?.isAdmin === true;
+  const items = navItems(isAdmin);
+  const name = me?.user.name ?? session?.user?.name ?? '';
+  const email = me?.user.email ?? session?.user?.email ?? '';
+
+  return (
+    <View style={styles.rail}>
+      <Pressable
+        onPress={() => router.navigate('/')}
+        style={styles.brand}
+        accessibilityRole="link"
+        accessibilityLabel="EMU Bin Tracker home"
+      >
+        <View style={styles.brandMark}>
+          <Ionicons name="leaf" size={21} color="#FFFFFF" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.brandName}>EMU Bin Tracker</Text>
+          <Text style={styles.brandSub}>Sustainability map</Text>
+        </View>
+      </Pressable>
+
+      <Button
+        title="Report a bin"
+        icon="add"
+        onPress={() => router.push('/report/new')}
+        style={styles.railCta}
+      />
+
+      <View style={styles.railNav}>
+        <Text style={styles.railSection}>Navigate</Text>
+        {items.map((item) => {
+          const on = active(pathname, item);
+          return (
+            <Pressable
+              key={item.key}
+              onPress={() => router.navigate(item.href)}
+              accessibilityRole="link"
+              style={({ pressed }) => [
+                styles.railItem,
+                on && styles.railItemActive,
+                pressed && { opacity: 0.75 },
+              ]}
+            >
+              <View style={[styles.railIcon, on && styles.railIconActive]}>
+                <Ionicons
+                  name={on ? item.icon.replace('-outline', '') as keyof typeof Ionicons.glyphMap : item.icon}
+                  size={19}
+                  color={on ? COLORS.primary : COLORS.textMuted}
+                />
+              </View>
+              <Text style={[styles.railLabel, on && styles.railLabelActive]}>{item.label}</Text>
+              {on ? <View style={styles.railDot} /> : null}
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <View style={{ flex: 1 }} />
+
+      <View style={styles.railFooter}>
+        <SocialLinks compact label="Community" />
+        <Pressable
+          onPress={() => router.navigate(session?.user ? '/profile' : '/sign-in')}
+          style={({ pressed }) => [styles.accountCard, pressed && { opacity: 0.8 }]}
+          accessibilityRole="link"
+        >
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>
+              {session?.user ? initials(name || email) : '?'}
+            </Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.accountName} numberOfLines={1}>
+              {session?.user ? name || 'Member' : 'Guest'}
+            </Text>
+            <Text style={styles.accountEmail} numberOfLines={1}>
+              {session?.user ? email : 'Sign in to contribute'}
+            </Text>
+          </View>
+          <Ionicons
+            name={session?.user ? 'chevron-forward' : 'log-in-outline'}
+            size={16}
+            color={COLORS.textMuted}
+          />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+/* ------------------------------- Mobile nav ------------------------------- */
+
 export function BottomNav() {
   const pathname = usePathname() ?? '/';
   const insets = useSafeAreaInsets();
-  const { data: me } = useQuery({
-    queryKey: ['me'],
-    queryFn: () => api<Me>('/api/me'),
-    retry: false,
-  });
-  const items = buildNavItems(me?.isAdmin === true);
+  const { data: me } = useMe();
+  const isAdmin = me?.isAdmin === true;
+
+  const left: NavItem[] = [
+    { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },
+    { key: 'alerts', href: '/alerts', label: 'Alerts', icon: 'notifications-outline' },
+  ];
+  const right: NavItem[] = isAdmin
+    ? [
+        { key: 'reports', href: '/profile', label: 'Reports', icon: 'document-text-outline' },
+        { key: 'admin', href: '/admin', label: 'Admin', icon: 'shield-checkmark-outline' },
+      ]
+    : [{ key: 'profile', href: '/profile', label: 'Profile', icon: 'person-outline' }];
+
+  const renderItem = (item: NavItem) => {
+    const on = item.key === 'reports' ? pathname.startsWith('/profile') : active(pathname, item);
+    return (
+      <Pressable
+        key={item.key}
+        onPress={() => router.navigate(item.href)}
+        accessibilityRole="link"
+        accessibilityState={{ selected: on }}
+        style={({ pressed }) => [styles.tab, pressed && { opacity: 0.65 }]}
+      >
+        <View style={[styles.tabIcon, on && styles.tabIconActive]}>
+          <Ionicons
+            name={on ? (item.icon.replace('-outline', '') as keyof typeof Ionicons.glyphMap) : item.icon}
+            size={21}
+            color={on ? COLORS.primary : COLORS.textMuted}
+          />
+        </View>
+        <Text style={[styles.tabLabel, on && styles.tabLabelActive]} numberOfLines={1}>
+          {item.label}
+        </Text>
+      </Pressable>
+    );
+  };
 
   return (
-    <View style={[styles.navBar, { paddingBottom: Math.max(insets.bottom, 10) + 4 }]}>
-      {items.map((item) => {
-        const active = isActive(pathname, item);
-        return (
-          <Link key={item.key} href={item.href} asChild>
-            <Pressable style={styles.navItem} accessibilityRole="link">
-              <Ionicons
-                name={item.icon}
-                size={22}
-                color={active ? COLORS.primary : COLORS.textMuted}
-              />
-              <Text style={[styles.navLabel, active && styles.navLabelActive]} numberOfLines={1}>
-                {item.label}
-              </Text>
-            </Pressable>
-          </Link>
-        );
-      })}
+    <View style={[styles.tabBarWrap, { bottom: Math.max(insets.bottom, 10) }]} pointerEvents="box-none">
+      <View style={styles.tabBar}>
+        {left.map(renderItem)}
+        <Pressable
+          onPress={() => router.push('/report/new')}
+          accessibilityRole="button"
+          accessibilityLabel="Report a bin"
+          style={({ pressed }) => [styles.reportTab, pressed && { opacity: 0.85 }]}
+        >
+          <View style={styles.reportFab}>
+            <Ionicons name="add" size={27} color="#FFFFFF" />
+          </View>
+          <Text style={styles.reportLabel}>Report</Text>
+        </Pressable>
+        {right.map(renderItem)}
+      </View>
     </View>
   );
 }
 
-/** Floating ☰ button for map overlay headers. */
-export function MenuButton() {
+/** Floating menu button for map overlay headers. */
+export function MenuButton({ tone = 'glass' }: { tone?: 'glass' | 'solid' }) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Pressable style={styles.menuButton} onPress={() => setOpen(true)}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open menu"
+        onPress={() => setOpen(true)}
+        style={({ pressed }) => [
+          styles.menuButton,
+          tone === 'solid' && { backgroundColor: COLORS.surface },
+          pressed && { opacity: 0.75 },
+        ]}
+      >
         <Ionicons name="menu" size={22} color={COLORS.text} />
       </Pressable>
-      <NavDrawer visible={open} onClose={() => setOpen(false)} />
+      <Sidebar isOpen={open} onClose={() => setOpen(false)} />
     </>
-  );
-}
-
-/** Left-side navigation drawer (works on native and web via Modal). */
-export function NavDrawer({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const pathname = usePathname() ?? '/';
-  const insets = useSafeAreaInsets();
-  const { data: session, isPending } = useSession();
-  const { data: me, refetch } = useQuery({
-    queryKey: ['me'],
-    queryFn: () => api<Me>('/api/me'),
-    retry: false,
-  });
-  // Refetch me when the drawer opens so a fresh role upgrade shows Admin.
-  const wasOpen = useRef(false);
-  useEffect(() => {
-    if (visible && !wasOpen.current) {
-      wasOpen.current = true;
-      void refetch();
-    } else if (!visible && wasOpen.current) {
-      wasOpen.current = false;
-    }
-  }, [visible, refetch]);
-
-  const signedIn = Boolean(session?.user);
-  const items = DRAWER_ITEMS.filter((i) => i.key !== 'admin' || me?.isAdmin === true);
-
-  async function signOut() {
-    await authClient.signOut();
-    // Full reload clears cached role state on every platform.
-    if (Platform.OS === 'web') window.location.href = '/';
-    else onClose();
-  }
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.drawerScrim}>
-        <Pressable style={styles.drawerScrimTouch} onPress={onClose} accessibilityLabel="Close menu" />
-        <View
-          style={[
-            styles.drawer,
-            { paddingTop: Math.max(insets.top, 14), paddingBottom: Math.max(insets.bottom, 14) },
-          ]}
-        >
-          <View style={styles.drawerHeader}>
-            <Ionicons name="leaf" size={26} color={COLORS.primary} />
-            <View style={styles.drawerHeaderText}>
-              <Text style={styles.drawerTitle}>EMU Bin Tracker</Text>
-              <Text style={styles.drawerSubtitle}>Report and verify campus bins</Text>
-            </View>
-          </View>
-
-          <View style={styles.drawerList}>
-            {items.map((item) => {
-              const active = isActive(pathname, item);
-              return (
-                <Link key={item.key} href={item.href} asChild onPress={onClose}>
-                  <Pressable style={[styles.drawerItem, active && styles.drawerItemActive]}>
-                    <Ionicons
-                      name={item.icon}
-                      size={20}
-                      color={active ? COLORS.primary : COLORS.text}
-                    />
-                    <Text style={[styles.drawerItemText, active && styles.drawerItemTextActive]}>
-                      {item.label}
-                    </Text>
-                  </Pressable>
-                </Link>
-              );
-            })}
-          </View>
-
-          <View style={styles.drawerFooter}>
-            {isPending ? null : signedIn ? (
-              <>
-                <Text style={styles.drawerUser} numberOfLines={1}>
-                  {session?.user?.email}
-                </Text>
-                <Pressable style={styles.drawerAction} onPress={signOut}>
-                  <Ionicons name="log-out-outline" size={18} color={COLORS.text} />
-                  <Text style={styles.drawerActionText}>Sign out</Text>
-                </Pressable>
-              </>
-            ) : (
-              <>
-                <Link href="/sign-in" asChild onPress={onClose}>
-                  <Pressable style={[styles.drawerAction, styles.drawerActionPrimary]}>
-                    <Ionicons name="log-in-outline" size={18} color="#FFFFFF" />
-                    <Text style={[styles.drawerActionText, { color: '#FFFFFF' }]}>Sign in</Text>
-                  </Pressable>
-                </Link>
-                <Link href="/sign-up" asChild onPress={onClose}>
-                  <Pressable style={styles.drawerAction}>
-                    <Ionicons name="person-add-outline" size={18} color={COLORS.text} />
-                    <Text style={styles.drawerActionText}>Create account</Text>
-                  </Pressable>
-                </Link>
-              </>
-            )}
-          </View>
-        </View>
-      </View>
-    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   shell: { flex: 1, backgroundColor: COLORS.bg },
-  navBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    zIndex: 40,
-    elevation: 24,
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.97)',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: COLORS.border,
-    paddingTop: 8,
-  },
-  navItem: { flex: 1, alignItems: 'center', gap: 3, paddingVertical: 2 },
-  navLabel: { fontSize: 11, fontWeight: '600', color: COLORS.textMuted },
-  navLabelActive: { color: COLORS.primary },
-  menuButton: {
-    backgroundColor: 'rgba(255,255,255,0.94)',
-    borderRadius: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
-  },
-  drawerScrim: { flex: 1, flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.35)' },
-  drawerScrimTouch: { flex: 1 },
-  drawer: {
-    width: '82%',
-    maxWidth: 340,
+  desktopShell: { flex: 1, flexDirection: 'row', backgroundColor: COLORS.bg },
+  desktopContent: { flex: 1, minWidth: 0 },
+
+  rail: {
+    width: DESKTOP_SIDEBAR_WIDTH,
     backgroundColor: COLORS.surface,
-    borderTopRightRadius: 18,
-    borderBottomRightRadius: 18,
+    borderRightWidth: 1,
+    borderRightColor: COLORS.border,
     paddingHorizontal: 16,
+    paddingTop: 22,
+    paddingBottom: 18,
+    gap: 16,
   },
-  drawerHeader: {
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingHorizontal: 4 },
+  brandMark: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...SHADOW.sm,
+  },
+  brandName: { fontSize: 15.5, fontWeight: '800', color: COLORS.text, letterSpacing: -0.3 },
+  brandSub: { fontSize: 11.5, color: COLORS.textMuted, marginTop: 1 },
+  railCta: { borderRadius: RADIUS.sm },
+  railNav: { gap: 3, marginTop: 6 },
+  railSection: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 1,
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    paddingHorizontal: 10,
+    paddingBottom: 5,
+  },
+  railItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    borderRadius: RADIUS.sm,
+  },
+  railItemActive: { backgroundColor: COLORS.primarySoft },
+  railIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  railIconActive: { backgroundColor: 'rgba(14,124,90,0.10)' },
+  railLabel: { flex: 1, fontSize: 14, fontWeight: '600', color: COLORS.textMuted },
+  railLabelActive: { color: COLORS.text, fontWeight: '700' },
+  railDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: COLORS.primary },
+  railFooter: { gap: 14 },
+  accountCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingVertical: 14,
+    padding: 10,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.surfaceAlt,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
-  drawerHeaderText: { flex: 1 },
-  drawerTitle: { fontSize: 17, fontWeight: '700', color: COLORS.text },
-  drawerSubtitle: { fontSize: 12, color: COLORS.textMuted, marginTop: 1 },
-  drawerList: { flexShrink: 1 },
-  drawerItem: {
+  avatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: { fontSize: 12, fontWeight: '800', color: '#FFFFFF' },
+  accountName: { fontSize: 13, fontWeight: '700', color: COLORS.text },
+  accountEmail: { fontSize: 11.5, color: COLORS.textMuted, marginTop: 1 },
+
+  tabBarWrap: { position: 'absolute', left: 12, right: 12, zIndex: 50, elevation: 40 },
+  tabBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    borderRadius: 12,
+    height: 68,
+    paddingHorizontal: 6,
+    borderRadius: RADIUS.xl,
+    backgroundColor: COLORS.glass,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...SHADOW.lg,
   },
-  drawerItemActive: { backgroundColor: COLORS.primarySoft },
-  drawerItemText: { fontSize: 15, fontWeight: '600', color: COLORS.text },
-  drawerItemTextActive: { color: COLORS.primary },
-  drawerFooter: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.border, paddingTop: 10 },
-  drawerUser: { fontSize: 12, color: COLORS.textMuted, marginBottom: 6 },
-  drawerAction: {
-    flexDirection: 'row',
+  tab: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 2, paddingVertical: 6 },
+  tabIcon: {
+    width: 38,
+    height: 26,
+    borderRadius: 9,
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    borderRadius: 12,
+    justifyContent: 'center',
   },
-  drawerActionPrimary: { backgroundColor: COLORS.primary, marginVertical: 2 },
-  drawerActionText: { fontSize: 15, fontWeight: '600', color: COLORS.text },
+  tabIconActive: { backgroundColor: COLORS.primarySoft },
+  tabLabel: { fontSize: 10, fontWeight: '600', color: COLORS.textMuted },
+  tabLabelActive: { color: COLORS.primary, fontWeight: '700' },
+  reportTab: { flex: 1.1, alignItems: 'center', justifyContent: 'center', gap: 1, paddingVertical: 4 },
+  reportFab: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: COLORS.surface,
+    ...SHADOW.md,
+  },
+  reportLabel: { fontSize: 9.5, fontWeight: '700', color: COLORS.primary, marginTop: 1 },
+
+  menuButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: COLORS.glass,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...SHADOW.md,
+  },
 });

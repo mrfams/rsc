@@ -1,23 +1,12 @@
 import 'dotenv/config';
 import { expo } from '@better-auth/expo';
 import { betterAuth } from 'better-auth';
-import { APIError } from 'better-auth/api';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 
 import { db } from './db';
 import * as authSchema from './db/auth-schema';
 
 const dev = process.env.NODE_ENV !== 'production';
-
-/**
- * Campus email gate (verification wave #0): only sign-ups from these domains
- * are accepted. Comma-separated; default is EMU mail. Emails listed in
- * ADMIN_EMAILS (seeded staff accounts) are exempt.
- */
-const ALLOWED_EMAIL_DOMAINS = (process.env.ALLOWED_EMAIL_DOMAINS ?? 'emu.edu.tr')
-  .split(',')
-  .map((d) => d.trim().toLowerCase())
-  .filter(Boolean);
 
 /** Emails granted moderation powers in /admin (comma-separated env list). */
 export function isAdminEmail(email: string | null | undefined): boolean {
@@ -51,30 +40,32 @@ export const auth = betterAuth({
     user: {
       create: {
         before: async (created) => {
-          const email = created.email?.toLowerCase() ?? '';
-          const isStaffEmail = isAdminEmail(email);
-          const at = email.lastIndexOf('@');
-          const domain = at >= 0 ? email.slice(at + 1) : '';
-          if (
-            ALLOWED_EMAIL_DOMAINS.length > 0 &&
-            !isStaffEmail &&
-            !ALLOWED_EMAIL_DOMAINS.includes(domain)
-          ) {
-            throw new APIError('BAD_REQUEST', {
-              message: `Sign-up needs a campus email (${ALLOWED_EMAIL_DOMAINS.join(', ')})`,
-            });
+          // Anyone can join; staff accounts bootstrap straight into admin.
+          if (isAdminEmail(created.email)) {
+            (created as { role?: string }).role = 'admin';
           }
-          // Staff accounts bootstrap straight into the admin role.
-          if (isStaffEmail) (created as { role?: string }).role = 'admin';
         },
       },
+    },
+  },
+  advanced: {
+    // Vercel (and any proxy) forwards the real client address. Without this,
+    // Better Auth rate-limits every visitor in one shared bucket.
+    ipAddress: {
+      ipAddressHeaders: ['x-forwarded-for', 'x-real-ip', 'cf-connecting-ip'],
     },
   },
   plugins: [expo()],
   trustedOrigins: [
     'rsc://',
-    // Development: Expo Go / dev clients deep-link with exp:// and local IPs.
-    ...(dev ? ['exp://**'] : []),
+    // Dev servers and Expo Go/dev-client deep links run on arbitrary local
+    // ports and exp:// origins; trust them only outside production.
+    ...(dev ? ['exp://**', 'http://localhost:*', 'http://127.0.0.1:*', 'http://[::1]:*'] : []),
+    // Deployment origins (production + Vercel previews).
+    ...(process.env.BETTER_AUTH_URL ? [process.env.BETTER_AUTH_URL] : []),
+    ...(process.env.APP_URL ? [process.env.APP_URL] : []),
+    ...(process.env.VERCEL_URL ? [`https://${process.env.VERCEL_URL}`] : []),
+    ...(dev ? [] : ['https://*.vercel.app']),
   ],
 });
 

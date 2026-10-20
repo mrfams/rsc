@@ -1,19 +1,22 @@
 import { getSessionUser, isAdminUser } from '@/lib/auth';
-import { setBinStatus } from '@/lib/report-service';
-import { binStatusSchema } from '@/lib/validation';
+import { updateBinDetails } from '@/lib/report-service';
+import { adminBinUpdateSchema } from '@/lib/validation';
 
-/** PATCH /api/admin/bins/[id] — force a bin lifecycle status (admin only). */
+/** PATCH /api/admin/bins/[id] — edit a bin's name, type, position or status. */
 export async function PATCH(request: Request, { id }: { id: string }) {
   const user = await getSessionUser(request);
   if (!user) throw new Response('Unauthorized', { status: 401 });
   if (!isAdminUser(user)) throw new Response('Admins only', { status: 403 });
 
-  const parsed = binStatusSchema.safeParse((await request.json())?.status);
+  const parsed = adminBinUpdateSchema.safeParse(await request.json());
   if (!parsed.success) {
-    return Response.json({ error: 'Invalid status' }, { status: 400 });
+    return Response.json(
+      { error: 'Invalid bin update', details: parsed.error.issues },
+      { status: 400 },
+    );
   }
 
-  const bin = await setBinStatus(id, parsed.data);
-  if (!bin) throw new Response('Bin not found', { status: 404 });
+  const bin = await updateBinDetails(id, parsed.data);
+  if (!bin) throw new Response('Bin or category not found', { status: 404 });
   return Response.json(bin);
 }
