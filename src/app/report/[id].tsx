@@ -12,6 +12,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { api } from '@/lib/api-client';
 import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
+import { displayNote } from '@/lib/notes';
 import { RADIUS, timeAgo } from '@/lib/theme';
 import { categoryEmoji } from '@/lib/validation';
 
@@ -111,7 +112,7 @@ export default function ReportDetailScreen() {
 
         <Card style={{ gap: 8 }}>
           <Text style={styles.cardLabel}>Note</Text>
-          <Text style={styles.note}>{data.note?.trim() || 'No note added.'}</Text>
+          <Text style={styles.note}>{displayNote(data.note) ?? 'No note added.'}</Text>
         </Card>
 
         <Card padded={false}>

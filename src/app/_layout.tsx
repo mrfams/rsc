@@ -1,10 +1,10 @@
-import { Ionicons } from '@expo/vector-icons';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { AppShell } from '@/components/AppChrome';
+import { BrandMark } from '@/components/ui/BrandMark';
 import { FeedbackProvider } from '@/components/ui/Feedback';
 import { COLORS } from '@/lib/constants';
 import { useHydrated } from '@/lib/use-hydrated';
@@ -47,7 +47,7 @@ function Splash() {
   return (
     <View style={styles.splash}>
       <View style={styles.mark}>
-        <Ionicons name="leaf" size={30} color="#FFFFFF" />
+        <BrandMark size={64} radius={20} />
       </View>
       <Text style={styles.title}>EMU Bin Tracker</Text>
       <Text style={styles.subtitle}>Sustainability map</Text>
@@ -64,15 +64,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bg,
     gap: 2,
   },
-  mark: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    backgroundColor: COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 14,
-  },
+  mark: { marginBottom: 14 },
   title: { fontSize: 20, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
   subtitle: { fontSize: 13, color: COLORS.textMuted },
 });

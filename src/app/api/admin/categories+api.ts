@@ -1,13 +1,13 @@
 import { getSessionUser, isAdminUser } from '@/lib/auth';
 import { db } from '@/lib/db';
-import { categories } from '@/lib/db/schema';
+import { bins, categories } from '@/lib/db/schema';
 import {
   listCategories,
   normalizeHex,
   normalizeSlug,
   DEFAULT_CATEGORIES,
 } from '@/lib/categories';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
 async function requireAdmin(request: Request) {
   const user = await getSessionUser(request);
@@ -85,4 +85,57 @@ export async function PATCH(request: Request) {
     .returning();
   if (updated.length === 0) return Response.json({ error: 'Unknown category' }, { status: 404 });
   return Response.json(updated[0]);
+}
+
+/**
+ * DELETE /api/admin/categories — permanently remove a bin type.
+ *
+ * `bins.category` is a foreign key, so a type in use cannot be deleted
+ * without breaking historical bins. Those are refused with a clear message;
+ * hiding (PATCH active:false) is always available instead.
+ */
+export async function DELETE(request: Request) {
+  await requireAdmin(request);
+
+  const body = (await request.json().catch(() => ({}))) as { slug?: string };
+  const slug = body.slug?.trim();
+  if (!slug) return Response.json({ error: 'slug is required' }, { status: 400 });
+
+  const [row] = await db
+    .select({ slug: categories.slug })
+    .from(categories)
+    .where(eq(categories.slug, slug))
+    .limit(1);
+  if (!row) return Response.json({ error: 'Unknown category' }, { status: 404 });
+
+  const [usage] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(bins)
+    .where(eq(bins.category, slug));
+  const used = Number(usage?.count ?? 0);
+  if (used > 0) {
+    return Response.json(
+      {
+        error: `This type is used by ${used} bin${used === 1 ? '' : 's'}. Hide it instead.`,
+      },
+      { status: 409 },
+    );
+  }
+
+  const [remaining] = await db.select({ count: sql<number>`count(*)` }).from(categories);
+  if (Number(remaining?.count ?? 0) <= 1) {
+    return Response.json({ error: 'Keep at least one bin type.' }, { status: 409 });
+  }
+
+  try {
+    await db.delete(categories).where(eq(categories.slug, slug));
+  } catch {
+    // A bin started using the type between the check and the delete.
+    return Response.json(
+      { error: 'This type is now in use by a bin. Hide it instead.' },
+      { status: 409 },
+    );
+  }
+
+  return Response.json({ ok: true, slug });
 }

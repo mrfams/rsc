@@ -8,28 +8,29 @@ and a Neon Postgres database, deployed on Vercel.
 
 | Area | Details |
 |---|---|
-| **Map** | MapLibre on native, Leaflet on web. Correct EMU campus boundary from OpenStreetMap (relation 15583365), place/building labels, street/satellite basemaps with a places overlay on satellite, recycling-pin markers (no circles), campus filter chips |
-| **Bin cards** | Tapping a bin opens a Google-Maps-style card: desktop floating right panel, mobile anchored bottom sheet (tap the handle to expand). Place name, type, photo, **“I see it too” quick verification**, Directions, “This bin is gone”, moderation and sighting history — no navigation away from the map |
-| **Layout** | Desktop: persistent navigation rail, floating map filters and panels. Mobile: floating tab bar with a central Report action, safe-area aware, plus a slide-in drawer with account, activity and contact links |
+| **Map** | MapLibre on native, Leaflet on web. Correct EMU campus boundary from OpenStreetMap (relation 15583365), street/satellite basemaps (satellite is the web default), recycling-pin markers (no circles), bin-type filter chips. A campus dropdown above the type chips switches between **Main campus** and **South campus** (including the medical campus) and shows live bin counts per campus — computed from the database and counting only bin types that are switched on. Place names come from the basemap (Leaflet draws its own labels on top of the satellite imagery); the app draws bins only |
+| **Bin cards** | Tapping a bin opens a Google-Maps-style card: desktop floating right panel, mobile anchored bottom sheet (tap the handle to expand). Place name, type, photo, **“I see it too” quick verification**, Directions, “This bin is gone”, moderation and sighting history — no navigation away from the map. A member confirms a bin only once: after that the button is replaced by a “you already confirmed this bin” thank-you. When someone flags the bin, the confirmation turns into **“Report this bin”** and **“This bin is gone”** takes the prominent spot (both behind a confirm modal) |
+| **Layout** | Desktop: persistent navigation rail, floating map filters and panels. Mobile: floating tab bar with a central Add action, safe-area aware, plus a slide-in drawer with account, activity, the opt-in top-10 leaderboard and contact links. Admins get Map, Review, Add, Profile and Admin. Signed-out visitors are sent to the sign-in page from every tab, rail and drawer entry — only the map stays open |
 | **Feedback** | Every mutation reports back: a success dialog for meaningful actions (bin added, geofence saved, sighting verified) and a toast for lighter updates. Errors surface inline instead of failing silently |
-| **Report** | Three clear steps: tap the pin, choose a category, add a note/photo. Camera or library photo, client-side compression, offline queue, geofence enforced on the server |
+| **Add a bin** | Three clear steps: choose **Pick on map** (full-screen tap-to-place pin) or **Use my location**, confirm the auto-suggested place name, select the bin type from a dropdown, then add a photo and note (camera or existing photos, client-side compression, offline queue). The campus outline is a visual reference only — a bin can be added inside or outside it |
 | **Auth** | One page with **Sign in / Create account** tabs. Any email can join; no campus-domain gate. Sessions work on web and native (SecureStore cookie) |
 | **Bin lifecycle** | Reports within 25 m (same category) merge into one bin; two distinct contributors verify it; members can flag a bin missing; a new sighting restores it |
-| **Profile** | Impact dashboard: trust score, reports, bins contributed, admin entry point and social/contact links |
+| **Stats** | Points dashboard and leaderboard: points for new bins, confirmations and photos, live rank with points to the next place, a “how points work” guide, sighting history, admin entry point and social/contact links. Names appear on the public top 10 only after the member explicitly allows it. The server pushes a notification when a contribution moves you up. Members can **edit their display name** and **delete their account** (password confirmed) from an Account card; deleting removes the profile, points and sightings and rebuilds the aggregates of every bin they touched |
 | **Alerts** | Activity on your own reports with All / Awaiting / Resolved filters; tapping an alert opens the bin card on the map |
-| **Admin** | A **hamburger-driven workspace** (Overview, Map studio, Bins, Bin types, People, Geofence) instead of a tab strip. Map studio pins, renames, retypes, moves and removes bins directly on the map with immediate boundary validation. Geofence editor has an explicit **Draw corners** mode (browsing never mutates the boundary), add/delete areas, numbered point editing, undo, reset to the real OSM boundary, and a confirm + success dialog on save |
-| **Server** | `/api/health`, `/api/bins` (+`/[id]`, `/[id]/dispute`), `/api/reports` (+`/[id]`, `?mine=1`), `/api/me`, `/api/config`, `/api/photos/*`, `/api/admin/*`, `/api/auth/*` |
-| **Safety** | Zod validation, JPEG magic-byte + size checks, auth and geofence enforcement on submissions, parameterised Drizzle queries |
+| **Admin** | A **hamburger-driven workspace** (Overview, Map studio, Bins, Bin types, People, Geofence) plus a dedicated **Review** route for the pending queue. Map studio pins, renames, retypes, moves and removes bins directly on the map, anywhere in the world, with **Use my location** and an optional photo. Overview cards open the matching section (members, awaiting review, etc.); bin types are created, edited and deleted in a modal. Geofence editor has an explicit **Draw corners** mode (browsing never mutates the boundary), add/delete areas, a numbered corner list that highlights each point on the map before you delete it, undo, reset to the real OSM boundary, and a confirm + success dialog on save |
+| **Server** | `/api/health`, `/api/bins` (+`/[id]`, `/[id]/dispute`), `/api/reports` (+`/[id]`, `?mine=1`), `/api/me` (GET/PATCH leaderboard consent), `/api/leaderboard`, `/api/config`, `/api/photos/*`, `/api/admin/*`, `/api/auth/*` |
+| **Safety** | Zod validation, JPEG magic-byte + size checks, auth enforcement on submissions, parameterised Drizzle queries |
 
 ### Geofence notes
 
 The old campus polygon was about 28 km north of EMU (in the sea). The app now
 uses the real OSM boundary (three rings: main campus, medical north, medical
 south) and self-heals a stored polygon whose centroid is more than 10 km from
-campus. Public bin queries hide rows outside the current boundary, so
-legacy/seed pins cannot scatter across the map. Saving in the editor writes to
-`app_config`, invalidates the public config query and takes effect immediately —
-no deploy. The editor refuses to save malformed rings and reports the reason.
+campus. The outline is drawn on every map as a reference, but it no longer
+gates placement: bins, reports and admin edits work anywhere, and every bin is
+listed publicly. Saving in the editor writes to `app_config`, invalidates the
+public config query and takes effect immediately — no deploy. The editor
+refuses to save malformed rings and reports the reason.
 
 ### Hydration + database notes
 
@@ -41,12 +42,13 @@ crash the server process.
 
 ### Contact links
 
-Defaults point at EMU Sustainability on Instagram and the EMU support WhatsApp
-line. Override them without code changes:
+Defaults point at the RSC EMU Instagram club (`rsemu_club`) and the club's
+WhatsApp group invite. Every in-app chip reads from `SOCIAL_LINKS`, so there is
+one place to change them. Override without code changes:
 
 ```bash
-EXPO_PUBLIC_INSTAGRAM_URL=https://www.instagram.com/<your-handle>/
-EXPO_PUBLIC_WHATSAPP_URL=https://wa.me/<international-number>
+EXPO_PUBLIC_INSTAGRAM_URL=https://www.instagram.com/rsemu_club/
+EXPO_PUBLIC_WHATSAPP_URL=https://chat.whatsapp.com/HfmvqCAdJ629e6kG2k9x0T?s=cl&p=a&mlu=4&ilr=4
 ```
 
 ## Quick start
@@ -77,7 +79,7 @@ npm run seed              # categories, admin and starter bins inside the real c
 
 ```
 ┌─ src/app ───────── screens (Expo Router: web + native from one source)
-│   map · auth · report/new · report/[id] · bins/[id] · profile · alerts · admin
+│   map · auth · report/new · report/[id] · bins/[id] · stats · alerts · admin
 ├─ src/app/api ────── server routes (+api.ts) — never bundled into the client
 ├─ src/components ── AppChrome (rail/tab bar), Sidebar, bins/BinDetails,
 │                     map/MapView.tsx (MapLibre) / MapView.web.tsx (Leaflet),
@@ -116,13 +118,15 @@ npm run seed              # categories, admin and starter bins inside the real c
 ### Native map note
 
 Both platforms use **MapLibre** — no API key, no Google billing. Street tiles
-come from the free OpenFreeMap "Liberty" style; satellite uses Esri World
-Imagery with the places overlay. The map needs a development build
-(`npx expo run:android` / EAS build); Expo Go cannot render the native module.
+come from the free OpenFreeMap "Liberty" style, which already carries place and
+building labels; satellite uses Esri World Imagery with a labels overlay. The
+app adds bin pins only — it does not draw its own place names. The map needs a
+development build (`npx expo run:android` / EAS build); Expo Go cannot render
+the native module.
 
 ## Data model
 
-- `user`, `session`, `account`, `verification` — Better Auth core schema
+- `user`, `session`, `account`, `verification` — Better Auth core schema; `user.leaderboard_opt_in` stores leaderboard consent
 - `bins` — id, category, lat/lng, area, status, report_count
 - `reports` — id, bin → user, lat/lng, note, photo_path, created_at
 - `categories` — slug, name, colour, emoji, active

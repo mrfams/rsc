@@ -16,6 +16,8 @@ export const user = pgTable('user', {
   image: text('image'),
   /** `admin` grants moderation powers; null/anything else = regular member. */
   role: text('role'),
+  /** Explicit consent to show this member's name on the public leaderboard. */
+  leaderboardOptIn: boolean('leaderboard_opt_in').notNull().default(false),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

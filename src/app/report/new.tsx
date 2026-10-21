@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useRef, useState, type ComponentRef } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -16,16 +16,19 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import MapView from '@/components/map/MapView';
 import type { MapMarker } from '@/components/map/types';
+import { LocationPicker, type PickedPoint } from '@/components/report/LocationPicker';
 import { Button } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Field';
 import { Notice } from '@/components/ui/Notice';
+import { Select } from '@/components/ui/Select';
+import { Sheet } from '@/components/ui/Sheet';
 import { api } from '@/lib/api-client';
 import { useSession } from '@/lib/auth-client';
-import { CAMPUS_CENTER, CAMPUS_POLYGONS, COLORS } from '@/lib/constants';
+import { CAMPUS_POLYGONS, COLORS } from '@/lib/constants';
 import { isInsideCampus, placeNameFor } from '@/lib/geo';
 import { enqueueReport } from '@/lib/offline';
 import { RADIUS, SHADOW } from '@/lib/theme';
@@ -39,14 +42,24 @@ type AppConfig = {
 
 type PickedPhoto = { uri: string; base64: string };
 
+type PinSource = 'map' | 'location';
+
 type NoticeState = { tone: 'error' | 'success' | 'info' | 'warning'; text: string } | null;
+
+type PhotoSource = 'camera' | 'photos';
 
 export default function NewReportScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const insets = useSafeAreaInsets();
   const { data: session } = useSession();
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
 
-  const { data: config } = useQuery({
+  const {
+    data: config,
+    isError: configError,
+    refetch: refetchConfig,
+  } = useQuery({
     queryKey: ['config'],
     queryFn: () => api<AppConfig>('/api/config'),
   });
@@ -61,43 +74,33 @@ export default function NewReportScreen() {
   const [locationName, setLocationName] = useState('');
   const [nameTouched, setNameTouched] = useState(false);
   const [note, setNote] = useState('');
-  const [pin, setPin] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [pin, setPin] = useState<PickedPoint | null>(null);
+  const [pinSource, setPinSource] = useState<PinSource | null>(null);
   const [photo, setPhoto] = useState<PickedPhoto | null>(null);
   const [busy, setBusy] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [photoSheetOpen, setPhotoSheetOpen] = useState(false);
+  const [attempted, setAttempted] = useState(false);
   const [submitted, setSubmitted] = useState<'online' | 'offline' | null>(null);
   const [newBinId, setNewBinId] = useState<string | null>(null);
   const [savedName, setSavedName] = useState('');
   const [notice, setNotice] = useState<NoticeState>(null);
-  const [center, setCenter] = useState(CAMPUS_CENTER);
 
-  const selectedCategory = category || categories[0]?.slug || '';
-  const selectedMeta = categories.find((c) => c.slug === selectedCategory);
+  const selectedMeta = categories.find((c) => c.slug === category);
   const inside = pin ? isInsideCampus(pin.latitude, pin.longitude, campusPolygons) : false;
+  const locationError = attempted && !pin ? 'Add the location before publishing.' : null;
+  const categoryError = attempted && !category ? 'Choose the bin type before publishing.' : null;
+  const missing = !pin ? 'Add the location' : !category ? 'Choose the bin type' : null;
 
-  function placePin(next: { latitude: number; longitude: number }) {
+  /** Place the pin and keep the auto-suggested place name in sync. */
+  function applyPin(next: PickedPoint, source: PinSource) {
     setPin(next);
+    setPinSource(source);
     if (!nameTouched) setLocationName(placeNameFor(next) ?? '');
     setNotice(null);
   }
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted') return;
-        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        const next = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-        if (isInsideCampus(next.latitude, next.longitude, campusPolygons)) {
-          placePin(next);
-          setCenter(next);
-        }
-      } catch {
-        // Optional: the user can still tap the campus map.
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   async function placeAtMyLocation() {
     setLocating(true);
@@ -105,32 +108,52 @@ export default function NewReportScreen() {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        setNotice({ tone: 'error', text: 'Location permission is off. Tap the map to place it.' });
-        return;
-      }
-      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      const next = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-      if (isInsideCampus(next.latitude, next.longitude, campusPolygons)) {
-        placePin(next);
-        setCenter(next);
-      } else {
-        setPin(null);
-        setCenter(CAMPUS_CENTER);
         setNotice({
           tone: 'warning',
-          text: 'You are off campus — showing the campus map. Tap the bin location inside the boundary.',
+          text: 'Location permission is off. Allow it in settings, or pick the spot on the map.',
+        });
+        return;
+      }
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      const next = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      };
+      applyPin(next, 'location');
+      if (!isInsideCampus(next.latitude, next.longitude, campusPolygons)) {
+        setNotice({
+          tone: 'info',
+          text: 'You are outside the campus outline — that is fine, the pin saves exactly where you are.',
         });
       }
     } catch {
-      setNotice({ tone: 'error', text: 'Could not get your location. Tap the map instead.' });
+      setNotice({ tone: 'error', text: 'Could not get your location. Pick the spot on the map instead.' });
     } finally {
       setLocating(false);
     }
   }
 
-  async function pickPhoto(source: 'library' | 'camera') {
+  async function pickPhoto(source: PhotoSource) {
     setNotice(null);
+    setPhotoBusy(true);
     try {
+      if (Platform.OS !== 'web') {
+        const permission =
+          source === 'camera'
+            ? await ImagePicker.requestCameraPermissionsAsync()
+            : await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          setNotice({
+            tone: 'warning',
+            text:
+              source === 'camera'
+                ? 'Camera access is off. Allow it in settings, or choose a photo instead.'
+                : 'Photo access is off. Allow it in settings to add a photo.',
+          });
+          return;
+        }
+      }
+
       const options: ImagePicker.ImagePickerOptions = {
         mediaTypes: ['images'],
         allowsEditing: true,
@@ -139,12 +162,13 @@ export default function NewReportScreen() {
         exif: false,
       };
       const result =
-        source === 'camera' && Platform.OS !== 'web'
+        source === 'camera'
           ? await ImagePicker.launchCameraAsync(options)
           : await ImagePicker.launchImageLibraryAsync(options);
       if (result.canceled || !result.assets[0]?.uri) return;
       const asset = result.assets[0];
 
+      // 1280px JPEG keeps uploads well under the server's 450 KB limit.
       const context = ImageManipulator.manipulate(asset.uri).resize({ width: 1280 });
       const image = await context.renderAsync();
       const saved = await image.saveAsync({
@@ -152,27 +176,32 @@ export default function NewReportScreen() {
         format: SaveFormat.JPEG,
         base64: true,
       });
-      setPhoto({ uri: saved.uri, base64: `data:image/jpeg;base64,${saved.base64 ?? ''}` });
+      if (!saved.base64) {
+        setNotice({ tone: 'error', text: 'Could not process that photo. Try another one.' });
+        return;
+      }
+      setPhoto({ uri: saved.uri, base64: `data:image/jpeg;base64,${saved.base64}` });
     } catch {
       setNotice({ tone: 'error', text: 'Could not process that photo. Try another one.' });
+    } finally {
+      setPhotoBusy(false);
     }
   }
 
   async function submit() {
+    setAttempted(true);
+
     if (!pin) {
-      setNotice({ tone: 'error', text: 'Tap the map to place the bin first.' });
+      setNotice({ tone: 'error', text: 'Add the bin’s location first — pick it on the map or use your location.' });
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
       return;
     }
-    if (!selectedCategory) {
-      setNotice({ tone: 'error', text: 'Pick the bin type.' });
-      return;
-    }
-    if (!isInsideCampus(pin.latitude, pin.longitude, campusPolygons)) {
-      setNotice({ tone: 'error', text: 'Place the pin inside the highlighted campus boundary.' });
+    if (!category) {
+      setNotice({ tone: 'error', text: 'Choose the bin type before publishing.' });
       return;
     }
     if (!session?.user) {
-      setNotice({ tone: 'info', text: 'Sign in to publish this report. Your draft stays here.' });
+      setNotice({ tone: 'info', text: 'Sign in to add this bin. Your draft stays here.' });
       router.push('/sign-in');
       return;
     }
@@ -180,7 +209,7 @@ export default function NewReportScreen() {
     const body: ReportInput = {
       lat: pin.latitude,
       lng: pin.longitude,
-      category: selectedCategory,
+      category,
       name: locationName.trim() ? locationName.trim() : undefined,
       note: note.trim() ? note.trim() : undefined,
       photoBase64: photo?.base64,
@@ -211,6 +240,20 @@ export default function NewReportScreen() {
     }
   }
 
+  function resetDraft() {
+    setSubmitted(null);
+    setNewBinId(null);
+    setPin(null);
+    setPinSource(null);
+    setLocationName('');
+    setNameTouched(false);
+    setNote('');
+    setPhoto(null);
+    setCategory('');
+    setAttempted(false);
+    setNotice(null);
+  }
+
   if (submitted) {
     return (
       <SafeAreaView style={styles.successRoot}>
@@ -227,8 +270,8 @@ export default function NewReportScreen() {
           </Text>
           <Text style={styles.successText}>
             {submitted === 'offline'
-              ? 'Your report is queued. It will upload automatically when you are back online.'
-              : `${savedName ? `${savedName} is` : 'Your bin is'} now on the campus map. Other members can confirm it as a second sighting.`}
+              ? 'Thank you — your bin is queued and will upload automatically when you are back online.'
+              : `Thank you — ${savedName ? `${savedName} is` : 'your bin is'} now on the campus map. Other members can confirm it as a second sighting.`}
           </Text>
           <Button
             title={submitted === 'online' && newBinId ? 'See it on the map' : 'Back to the map'}
@@ -243,15 +286,9 @@ export default function NewReportScreen() {
             style={{ width: '100%' }}
           />
           <Button
-            title="Report another"
+            title="Add another"
             variant="secondary"
-            onPress={() => {
-              setSubmitted(null);
-              setNewBinId(null);
-              setPin(null);
-              setNote('');
-              setPhoto(null);
-            }}
+            onPress={resetDraft}
             style={{ width: '100%' }}
           />
         </View>
@@ -275,216 +312,399 @@ export default function NewReportScreen() {
         ];
 
   return (
-    <SafeAreaView style={styles.root}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1 }}
-      >
-      <View style={styles.header}>
-        <Pressable
-          onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}
-          accessibilityRole="button"
-          accessibilityLabel="Close report form"
-          style={({ pressed }) => [styles.close, pressed && { opacity: 0.6 }]}
+    <View style={styles.root}>
+      <SafeAreaView edges={['top', 'left', 'right']} style={{ flex: 1 }}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1 }}
         >
-          <Ionicons name="close" size={20} color={COLORS.text} />
-        </Pressable>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Report a bin</Text>
-          <Text style={styles.headerSub}>Takes about 30 seconds</Text>
-        </View>
-        {!session?.user ? (
-          <Button title="Sign in" size="sm" variant="secondary" onPress={() => router.push('/sign-in')} />
-        ) : null}
-      </View>
-
-      <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={styles.scroll}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.content}>
-          <View style={styles.sectionHead}>
-            <View style={styles.stepDot}>
-              <Text style={styles.stepText}>1</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.sectionTitle}>Where is the bin?</Text>
-              <Text style={styles.sectionSub}>Tap the exact spot on the map.</Text>
-            </View>
-          </View>
-
-          <View style={styles.mapCard}>
-            <MapView
-              markers={markers}
-              center={center}
-              polygons={campusPolygons}
-              showUserLocation
-              maskOutside
-              onPressMap={(lat, lng) => placePin({ latitude: lat, longitude: lng })}
-              style={styles.map}
-            />
+          <View style={styles.header}>
             <Pressable
-              onPress={() => void placeAtMyLocation()}
-              style={({ pressed }) => [styles.locate, pressed && { opacity: 0.8 }]}
+              onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}
+              accessibilityRole="button"
+              accessibilityLabel="Close add bin form"
+              style={({ pressed }) => [styles.close, pressed && { opacity: 0.6 }]}
             >
-              {locating ? (
-                <ActivityIndicator size="small" color={COLORS.primary} />
-              ) : (
-                <Ionicons name="locate" size={17} color={COLORS.primary} />
-              )}
-              <Text style={styles.locateText}>Use my location</Text>
+              <Ionicons name="close" size={20} color={COLORS.text} />
             </Pressable>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.headerTitle}>Add a bin</Text>
+              <Text style={styles.headerSub}>Takes about 30 seconds</Text>
+            </View>
+            {!session?.user ? (
+              <Button
+                title="Sign in"
+                size="sm"
+                variant="secondary"
+                onPress={() => router.push('/sign-in')}
+              />
+            ) : null}
           </View>
 
-          <View style={styles.pinHint}>
-            <Ionicons
-              name={pin ? (inside ? 'checkmark-circle' : 'alert-circle') : 'hand-left-outline'}
-              size={15}
-              color={pin ? (inside ? COLORS.success : COLORS.warning) : COLORS.textMuted}
+          <ScrollView
+            ref={scrollRef}
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.scroll}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.content}>
+              {/* 1 — Location + place name */}
+              <View style={styles.sectionHead}>
+                <View style={styles.stepDot}>
+                  <Text style={styles.stepText}>1</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.sectionTitle}>Where is the bin?</Text>
+                  <Text style={styles.sectionSub}>
+                    Pick the exact spot on the map, or use where you are standing.
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.locationOptions}>
+                <LocationOption
+                  icon="map-outline"
+                  title="Pick on map"
+                  subtitle="Tap the exact spot"
+                  done={pinSource === 'map'}
+                  onPress={() => setPickerOpen(true)}
+                />
+                <LocationOption
+                  icon="locate-outline"
+                  title="Use my location"
+                  subtitle="Jump to where you are"
+                  done={pinSource === 'location'}
+                  loading={locating}
+                  onPress={() => void placeAtMyLocation()}
+                />
+              </View>
+
+              {pin ? (
+                <View style={styles.previewCard}>
+                  <View style={styles.previewMap} pointerEvents="none">
+                    <MapView
+                      markers={markers}
+                      center={pin}
+                      zoom={17.5}
+                      polygons={campusPolygons}
+                      showUserLocation={false}
+                      style={styles.map}
+                    />
+                  </View>
+                  <Pressable
+                    onPress={() => setPickerOpen(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Change the pinned location"
+                    style={({ pressed }) => [styles.changeChip, pressed && { opacity: 0.8 }]}
+                  >
+                    <Ionicons name="expand-outline" size={13} color={COLORS.text} />
+                    <Text style={styles.changeChipText}>Change</Text>
+                  </Pressable>
+
+                  <View style={styles.previewBody}>
+                    <View
+                      style={[
+                        styles.previewIcon,
+                        { backgroundColor: inside ? COLORS.successSoft : COLORS.infoSoft },
+                      ]}
+                    >
+                      <Ionicons
+                        name={inside ? 'checkmark-circle' : 'location'}
+                        size={17}
+                        color={inside ? COLORS.success : COLORS.info}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.previewTitle}>
+                        {inside ? 'Pin placed inside campus' : 'Pin placed outside campus'}
+                      </Text>
+                      <Text style={styles.previewSub} numberOfLines={1}>
+                        {pin.latitude.toFixed(5)}, {pin.longitude.toFixed(5)}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.locationEmpty}>
+                  <Ionicons name="location-outline" size={18} color={COLORS.textMuted} />
+                  <Text style={styles.locationEmptyText}>
+                    No location yet — pick it on the map or use your location.
+                  </Text>
+                </View>
+              )}
+
+              {locationError ? <Text style={styles.error}>{locationError}</Text> : null}
+
+              <Field
+                label="Place name"
+                value={locationName}
+                onChangeText={(value) => {
+                  setLocationName(value);
+                  setNameTouched(true);
+                }}
+                placeholder="e.g. DAU 3 Dormitory, outside the library"
+                icon="location-outline"
+                autoCapitalize="words"
+                maxLength={80}
+                hint={
+                  locationName && !nameTouched
+                    ? 'Suggested from the nearest campus place — edit it if you know the exact spot.'
+                    : pin
+                      ? 'Add a landmark so other people can find it.'
+                      : 'We suggest the nearest campus place once you pick a point.'
+                }
+              />
+
+              {/* 2 — Bin type */}
+              <View style={styles.sectionHead}>
+                <View style={styles.stepDot}>
+                  <Text style={styles.stepText}>2</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.sectionTitle}>What kind of bin?</Text>
+                  <Text style={styles.sectionSub}>Open the list and pick the closest match.</Text>
+                </View>
+              </View>
+
+              <Select
+                options={categories.map((c) => ({
+                  value: c.slug,
+                  label: c.name,
+                  emoji: c.emoji,
+                  color: c.color,
+                }))}
+                value={category || null}
+                onChange={setCategory}
+                placeholder={
+                  configError
+                    ? 'Bin types unavailable'
+                    : categories.length
+                      ? 'Choose the bin type'
+                      : 'Loading bin types…'
+                }
+                loading={!config && !configError}
+                error={categoryError}
+                hint="This sets the pin colour and the map filter."
+                sheetTitle="Bin type"
+                label="Bin type"
+              />
+
+              {configError ? (
+                <Notice
+                  tone="error"
+                  message="Could not load the bin types. Check your connection and try again."
+                  actionLabel="Retry"
+                  onAction={() => void refetchConfig()}
+                />
+              ) : null}
+
+              {/* 3 — Photo + note */}
+              <View style={styles.sectionHead}>
+                <View style={styles.stepDot}>
+                  <Text style={styles.stepText}>3</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.sectionTitle}>Add details</Text>
+                  <Text style={styles.sectionSub}>Optional, but a photo helps a lot.</Text>
+                </View>
+              </View>
+
+              {photo ? (
+                <View style={styles.photoRow}>
+                  <Image source={{ uri: photo.uri }} style={styles.photoPreview} />
+                  <View style={{ flex: 1, gap: 8 }}>
+                    <Text style={styles.photoTitle}>Photo added</Text>
+                    <Text style={styles.photoSub}>
+                      People will see it on the map. Compressed automatically before upload.
+                    </Text>
+                    <View style={styles.photoActions}>
+                      <Button
+                        title="Replace"
+                        variant="secondary"
+                        size="sm"
+                        icon="images-outline"
+                        onPress={() => setPhotoSheetOpen(true)}
+                        disabled={photoBusy}
+                      />
+                      <Button
+                        title="Remove"
+                        variant="ghost"
+                        size="sm"
+                        onPress={() => setPhoto(null)}
+                      />
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <Pressable
+                  onPress={() => setPhotoSheetOpen(true)}
+                  disabled={photoBusy}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add a photo of the bin"
+                  style={({ pressed }) => [styles.addPhoto, pressed && { opacity: 0.85 }]}
+                >
+                  <View style={styles.addPhotoIcon}>
+                    {photoBusy ? (
+                      <ActivityIndicator size="small" color={COLORS.primary} />
+                    ) : (
+                      <Ionicons name="camera-outline" size={22} color={COLORS.primary} />
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.addPhotoTitle}>
+                      {photoBusy ? 'Preparing photo…' : 'Add a photo'}
+                    </Text>
+                    <Text style={styles.addPhotoSub}>
+                      Show people exactly what the bin looks like — take one now or choose from
+                      your photos.
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
+                </Pressable>
+              )}
+
+              <Field
+                label="Note"
+                value={note}
+                onChangeText={setNote}
+                placeholder="e.g. outside the library stairs, slightly full"
+                multiline
+                maxLength={500}
+                icon="create-outline"
+              />
+
+              {notice ? (
+                <Notice tone={notice.tone} message={notice.text} onDismiss={() => setNotice(null)} />
+              ) : null}
+            </View>
+          </ScrollView>
+
+          <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 14) }]}>
+            <Button
+              title={session?.user ? 'Add bin' : 'Sign in to add'}
+              icon="paper-plane-outline"
+              onPress={() => void submit()}
+              loading={busy}
+              size="lg"
             />
-            <Text
-              style={[
-                styles.pinHintText,
-                pin && !inside && { color: COLORS.warning },
-                pin && inside && { color: COLORS.success },
-              ]}
-            >
-              {pin
-                ? inside
-                  ? 'Pin placed inside campus.'
-                  : 'That spot is outside campus — move the pin inside the boundary.'
-                : 'No pin yet. Tap the map or use your location.'}
+            <Text style={styles.footerHint}>
+              {missing ? `${missing} to add the bin.` : 'Ready to add the bin.'}
             </Text>
           </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
 
-          <View style={styles.sectionHead}>
-            <View style={styles.stepDot}>
-              <Text style={styles.stepText}>2</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.sectionTitle}>What kind of bin?</Text>
-              <Text style={styles.sectionSub}>Pick the closest match.</Text>
-            </View>
-          </View>
+      <LocationPicker
+        visible={pickerOpen}
+        initial={pin}
+        polygons={campusPolygons}
+        onClose={() => setPickerOpen(false)}
+        onConfirm={(point) => {
+          applyPin(point, 'map');
+          setPickerOpen(false);
+        }}
+      />
 
-          <View style={styles.categoryGrid}>
-            {categories.map((c) => {
-              const active = selectedCategory === c.slug;
-              return (
-                <Pressable
-                  key={c.slug}
-                  onPress={() => setCategory(c.slug)}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected: active }}
-                  style={({ pressed }) => [
-                    styles.categoryCard,
-                    active && { borderColor: c.color, backgroundColor: `${c.color}0F` },
-                    pressed && { opacity: 0.8 },
-                  ]}
-                >
-                  <View style={[styles.categoryEmojiWrap, { backgroundColor: `${c.color}18` }]}>
-                    <Text style={styles.categoryEmoji}>{c.emoji}</Text>
-                  </View>
-                  <Text style={styles.categoryName} numberOfLines={1}>
-                    {c.name}
-                  </Text>
-                  <View
-                    style={[
-                      styles.radio,
-                      active && { backgroundColor: c.color, borderColor: c.color },
-                    ]}
-                  >
-                    {active ? <Ionicons name="checkmark" size={11} color="#FFFFFF" /> : null}
-                  </View>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <View style={styles.sectionHead}>
-            <View style={styles.stepDot}>
-              <Text style={styles.stepText}>3</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.sectionTitle}>Add details</Text>
-              <Text style={styles.sectionSub}>Optional, but photos help a lot.</Text>
-            </View>
-          </View>
-
-          <Field
-            label="Place name"
-            value={locationName}
-            onChangeText={(value) => {
-              setLocationName(value);
-              setNameTouched(true);
-            }}
-            placeholder="e.g. DAU 3 Dormitory, outside the library"
-            icon="location-outline"
-            autoCapitalize="words"
-            maxLength={80}
-            hint="We suggest the nearest campus building — edit it if you know the exact spot."
-          />
-
-          <Field
-            label="Note"
-            value={note}
-            onChangeText={setNote}
-            placeholder="e.g. outside the library stairs, slightly full"
-            multiline
-            maxLength={500}
-            icon="create-outline"
-          />
-
-          {photo ? (
-            <View style={styles.photoRow}>
-              <Image source={{ uri: photo.uri }} style={styles.photoPreview} />
-              <View style={{ flex: 1, gap: 8 }}>
-                <Text style={styles.photoTitle}>Photo attached</Text>
-                <Text style={styles.photoSub}>Compressed automatically before upload.</Text>
-                <Button title="Remove photo" variant="ghost" size="sm" onPress={() => setPhoto(null)} />
-              </View>
-            </View>
-          ) : (
-            <View style={styles.photoButtons}>
-              <Pressable
-                onPress={() => void pickPhoto('camera')}
-                style={({ pressed }) => [styles.photoButton, pressed && { opacity: 0.8 }]}
-              >
-                <Ionicons name="camera-outline" size={20} color={COLORS.primary} />
-                <Text style={styles.photoButtonText}>Camera</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => void pickPhoto('library')}
-                style={({ pressed }) => [styles.photoButton, pressed && { opacity: 0.8 }]}
-              >
-                <Ionicons name="images-outline" size={20} color={COLORS.primary} />
-                <Text style={styles.photoButtonText}>Library</Text>
-              </Pressable>
-            </View>
-          )}
-
-          {notice ? (
-            <Notice tone={notice.tone} message={notice.text} onDismiss={() => setNotice(null)} />
-          ) : null}
-        </View>
-      </ScrollView>
-
-      <View style={styles.footer}>
-        <Button
-          title={session?.user ? 'Publish report' : 'Sign in to publish'}
-          icon="paper-plane-outline"
-          onPress={() => void submit()}
-          loading={busy}
-          size="lg"
+      <Sheet
+        visible={photoSheetOpen}
+        onClose={() => setPhotoSheetOpen(false)}
+        title="Add a photo"
+        subtitle="A photo helps everyone recognise the bin at a glance."
+      >
+        <PhotoSourceOption
+          icon="camera-outline"
+          title="Take a photo"
+          subtitle="Use your camera now"
+          onPress={() => {
+            setPhotoSheetOpen(false);
+            void pickPhoto('camera');
+          }}
         />
-        <Text style={styles.footerHint}>
-          {pin && inside ? 'Ready to publish.' : 'Place a pin inside campus to publish.'}
-        </Text>
+        <PhotoSourceOption
+          icon="images-outline"
+          title="Choose from photos"
+          subtitle="Pick one you already have"
+          onPress={() => {
+            setPhotoSheetOpen(false);
+            void pickPhoto('photos');
+          }}
+        />
+      </Sheet>
+    </View>
+  );
+}
+
+function LocationOption({
+  icon,
+  title,
+  subtitle,
+  onPress,
+  done,
+  loading,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+  onPress: () => void;
+  done?: boolean;
+  loading?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={loading}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      accessibilityState={{ disabled: Boolean(loading) }}
+      style={({ pressed }) => [
+        styles.locationOption,
+        done && styles.locationOptionDone,
+        pressed && { opacity: 0.82 },
+      ]}
+    >
+      <View style={[styles.locationOptionIcon, done && styles.locationOptionIconDone]}>
+        {loading ? (
+          <ActivityIndicator size="small" color={COLORS.primary} />
+        ) : (
+          <Ionicons name={done ? 'checkmark' : icon} size={20} color={done ? '#FFFFFF' : COLORS.primary} />
+        )}
       </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.locationOptionTitle}>{title}</Text>
+        <Text style={styles.locationOptionSub}>{subtitle}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function PhotoSourceOption({
+  icon,
+  title,
+  subtitle,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      style={({ pressed }) => [styles.photoSource, pressed && { opacity: 0.8 }]}
+    >
+      <View style={styles.photoSourceIcon}>
+        <Ionicons name={icon} size={20} color={COLORS.primary} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.photoSourceTitle}>{title}</Text>
+        <Text style={styles.photoSourceSub}>{subtitle}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={17} color={COLORS.textMuted} />
+    </Pressable>
   );
 }
 
@@ -529,8 +749,36 @@ const styles = StyleSheet.create({
   },
   stepText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
   sectionTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.3 },
-  sectionSub: { fontSize: 12.5, color: COLORS.textMuted, marginTop: 1 },
-  mapCard: {
+  sectionSub: { fontSize: 12.5, color: COLORS.textMuted, marginTop: 1, lineHeight: 17 },
+
+  locationOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
+  locationOption: {
+    flexGrow: 1,
+    flexBasis: '45%',
+    minWidth: 190,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    padding: 13,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+  },
+  locationOptionDone: { borderColor: COLORS.primary, backgroundColor: COLORS.primarySoft },
+  locationOptionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.primarySoft,
+  },
+  locationOptionIconDone: { backgroundColor: COLORS.primary },
+  locationOptionTitle: { fontSize: 14, fontWeight: '800', color: COLORS.text },
+  locationOptionSub: { fontSize: 11.5, color: COLORS.textMuted, marginTop: 1 },
+
+  previewCard: {
     borderRadius: RADIUS.lg,
     overflow: 'hidden',
     backgroundColor: COLORS.surface,
@@ -538,57 +786,54 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     ...SHADOW.sm,
   },
-  map: { height: 286, width: '100%' },
-  locate: {
+  previewMap: { height: 148, width: '100%', backgroundColor: COLORS.surfaceAlt },
+  map: { flex: 1, width: '100%' },
+  changeChip: {
     position: 'absolute',
-    right: 10,
-    top: 10,
+    top: 9,
+    right: 9,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: COLORS.glass,
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: RADIUS.pill,
-    paddingHorizontal: 11,
-    paddingVertical: 8,
+    backgroundColor: COLORS.glass,
     borderWidth: 1,
     borderColor: COLORS.border,
     ...SHADOW.sm,
   },
-  locateText: { fontSize: 11.5, fontWeight: '700', color: COLORS.primary },
-  pinHint: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4 },
-  pinHintText: { flex: 1, fontSize: 12.5, color: COLORS.textMuted },
-  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
-  categoryCard: {
-    flexGrow: 1,
-    flexBasis: '30%',
-    minWidth: 150,
+  changeChipText: { fontSize: 11.5, fontWeight: '700', color: COLORS.text },
+  previewBody: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 9,
-    padding: 11,
-    borderRadius: RADIUS.md,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1.5,
-    borderColor: COLORS.border,
+    gap: 10,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
   },
-  categoryEmojiWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+  previewIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  categoryEmoji: { fontSize: 19 },
-  categoryName: { flex: 1, fontSize: 13.5, fontWeight: '700', color: COLORS.text },
-  radio: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: COLORS.border,
+  previewTitle: { fontSize: 13.5, fontWeight: '700', color: COLORS.text },
+  previewSub: { fontSize: 11.5, color: COLORS.textMuted, marginTop: 1 },
+  locationEmpty: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.surfaceAlt,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
+  locationEmptyText: { flex: 1, fontSize: 12.5, color: COLORS.textMuted, lineHeight: 17 },
+  error: { fontSize: 12.5, color: COLORS.danger, marginLeft: 2, marginTop: -6 },
+
   photoRow: {
     flexDirection: 'row',
     gap: 13,
@@ -600,28 +845,57 @@ const styles = StyleSheet.create({
   },
   photoPreview: { width: 104, height: 104, borderRadius: 12, backgroundColor: COLORS.surfaceAlt },
   photoTitle: { fontSize: 14, fontWeight: '700', color: COLORS.text },
-  photoSub: { fontSize: 12, color: COLORS.textMuted },
-  photoButtons: { flexDirection: 'row', gap: 9 },
-  photoButton: {
-    flex: 1,
+  photoSub: { fontSize: 12, lineHeight: 16, color: COLORS.textMuted },
+  photoActions: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  addPhoto: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
+    gap: 12,
+    padding: 14,
     borderRadius: RADIUS.md,
-    backgroundColor: COLORS.primarySoft,
-    borderWidth: 1,
-    borderColor: 'rgba(14,124,90,0.18)',
+    backgroundColor: COLORS.surface,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: COLORS.primary,
   },
-  photoButtonText: { fontSize: 13.5, fontWeight: '700', color: COLORS.primary },
+  addPhotoIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.primarySoft,
+  },
+  addPhotoTitle: { fontSize: 14.5, fontWeight: '800', color: COLORS.text },
+  addPhotoSub: { fontSize: 12, lineHeight: 16.5, color: COLORS.textMuted, marginTop: 2 },
+
+  photoSource: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+  },
+  photoSourceIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.primarySoft,
+  },
+  photoSourceTitle: { fontSize: 14.5, fontWeight: '700', color: COLORS.text },
+  photoSourceSub: { fontSize: 12, color: COLORS.textMuted, marginTop: 1 },
+
   footer: {
     backgroundColor: COLORS.surface,
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
     paddingHorizontal: 20,
     paddingTop: 12,
-    paddingBottom: 14,
     gap: 6,
   },
   footerHint: { fontSize: 11.5, color: COLORS.textMuted, textAlign: 'center' },

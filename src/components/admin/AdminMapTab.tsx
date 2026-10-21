@@ -1,8 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import * as ImagePicker from 'expo-image-picker';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import * as Location from 'expo-location';
 import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -55,6 +60,8 @@ type Config = { campusPolygons?: CampusPoint[][]; campusPolygon?: CampusPoint[] 
 
 type Mode = 'idle' | 'add' | 'move';
 
+type PickedPhoto = { uri: string; base64: string };
+
 export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) {
   const queryClient = useQueryClient();
   const { toast, showDialog, confirm } = useFeedback();
@@ -72,6 +79,8 @@ export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) 
   const [nameTouched, setNameTouched] = useState(false);
   const [category, setCategory] = useState('');
   const [status, setStatus] = useState<BinStatus>('verified');
+  const [photo, setPhoto] = useState<PickedPhoto | null>(null);
+  const [locating, setLocating] = useState(false);
 
   const { data: bins, isLoading } = useQuery({
     queryKey: ['admin-bins'],
@@ -97,12 +106,17 @@ export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) 
 
   const position = draft ?? (selectedBin ? { latitude: selectedBin.lat, longitude: selectedBin.lng } : null);
   const mapCenter = position ?? CAMPUS_CENTER;
+  const outsideBoundary =
+    Boolean(position && polygons?.length) &&
+    !isInsideCampus(position!.latitude, position!.longitude, polygons!);
 
   const categoryColor = (slug: string) =>
     categories?.find((c) => c.slug === slug)?.color ?? CATEGORY_COLORS[slug] ?? COLORS.primary;
 
+  const activeSlugs = new Set(activeCategories.map((category) => category.slug));
   const markers: MapMarker[] = (bins ?? [])
     .filter((bin) => bin.status !== 'removed')
+    .filter((bin) => !categories || activeSlugs.has(bin.category))
     .map((bin) => ({
       id: bin.id,
       latitude: bin.lat,
@@ -133,6 +147,7 @@ export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) 
     setNameTouched(false);
     setCategory(defaultCategory);
     setStatus('verified');
+    setPhoto(null);
     setNotice(null);
   }
 
@@ -154,13 +169,6 @@ export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) 
     if (Date.now() - lastMarkerPress.current < 350) return;
     if (mode === 'add') {
       const next = { latitude: lat, longitude: lng };
-      if (polygons?.length && !isInsideCampus(next.latitude, next.longitude, polygons)) {
-        setNotice({
-          tone: 'warning',
-          text: 'That spot is outside the campus boundary. Pick a point inside the highlighted area.',
-        });
-        return;
-      }
       setDraft(next);
       if (!nameTouched) {
         setName(nearestCampusPlace(next, 220)?.place.name ?? '');
@@ -170,13 +178,6 @@ export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) 
     }
     if (mode === 'move' && selectedBin) {
       const next = { latitude: lat, longitude: lng };
-      if (polygons?.length && !isInsideCampus(next.latitude, next.longitude, polygons)) {
-        setNotice({
-          tone: 'warning',
-          text: 'The new spot is outside the campus boundary. Choose a point inside it.',
-        });
-        return;
-      }
       setDraft(next);
       setMode('idle');
       setNotice({ tone: 'info', text: 'New position picked. Press Save changes to apply it.' });
@@ -184,6 +185,52 @@ export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) 
     }
     setSelectedBinId(null);
     setDraft(null);
+  }
+
+  async function locateAtMyPosition() {
+    setLocating(true);
+    setNotice(null);
+    try {
+      const { status: permission } = await Location.requestForegroundPermissionsAsync();
+      if (permission !== 'granted') {
+        setNotice({ tone: 'error', text: 'Location permission is off. Tap the map instead.' });
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      const next = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+      setDraft(next);
+      if (!nameTouched) setName(nearestCampusPlace(next, 220)?.place.name ?? '');
+      setNotice({ tone: 'info', text: 'Pin placed at your current location. Tap the map to adjust it.' });
+    } catch {
+      setNotice({ tone: 'error', text: 'Could not get your location. Tap the map instead.' });
+    } finally {
+      setLocating(false);
+    }
+  }
+
+  async function pickPhoto(source: 'library' | 'camera') {
+    setNotice(null);
+    try {
+      const options: ImagePicker.ImagePickerOptions = {
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        quality: 0.8,
+        base64: true,
+        exif: false,
+      };
+      const result =
+        source === 'camera' && Platform.OS !== 'web'
+          ? await ImagePicker.launchCameraAsync(options)
+          : await ImagePicker.launchImageLibraryAsync(options);
+      if (result.canceled || !result.assets[0]?.uri) return;
+      const asset = result.assets[0];
+      const context = ImageManipulator.manipulate(asset.uri).resize({ width: 1280 });
+      const image = await context.renderAsync();
+      const saved = await image.saveAsync({ compress: 0.7, format: SaveFormat.JPEG, base64: true });
+      setPhoto({ uri: saved.uri, base64: `data:image/jpeg;base64,${saved.base64 ?? ''}` });
+    } catch {
+      setNotice({ tone: 'error', text: 'Could not process that photo. Try another one.' });
+    }
   }
 
   const save = useMutation({
@@ -202,6 +249,7 @@ export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) 
             lat: draft.latitude,
             lng: draft.longitude,
             status,
+            photoBase64: photo?.base64,
           },
         });
       }
@@ -228,6 +276,7 @@ export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) 
       setDraft(null);
       setName('');
       setNameTouched(false);
+      setPhoto(null);
       queryClient.invalidateQueries({ queryKey: ['admin-bins'] });
       queryClient.invalidateQueries({ queryKey: ['bins'] });
       queryClient.invalidateQueries({ queryKey: ['bin'] });
@@ -298,11 +347,25 @@ export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) 
           center={mapCenter}
           zoom={selectedBinId || draft ? 16.5 : 15}
           polygons={polygons}
-          maskOutside
           onPressMap={handleMapPress}
           onPressMarker={selectBin}
           style={styles.map}
         />
+        {mode === 'add' ? (
+          <Pressable
+            onPress={() => void locateAtMyPosition()}
+            accessibilityRole="button"
+            accessibilityLabel="Use my current location"
+            style={({ pressed }) => [styles.locate, pressed && { opacity: 0.8 }]}
+          >
+            {locating ? (
+              <ActivityIndicator size="small" color={COLORS.primary} />
+            ) : (
+              <Ionicons name="locate" size={16} color={COLORS.primary} />
+            )}
+            <Text style={styles.locateText}>Use my location</Text>
+          </Pressable>
+        ) : null}
         <View style={styles.mapHint}>
           <Ionicons
             name={mode === 'add' ? 'add-circle-outline' : mode === 'move' ? 'move-outline' : 'hand-left-outline'}
@@ -312,8 +375,8 @@ export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) 
           <Text style={styles.mapHintText}>
             {mode === 'add'
               ? draft
-                ? 'Pin placed. Fill in the name and type below.'
-                : 'Tap the exact spot for the new bin.'
+                ? 'Pin placed anywhere works. Fill in the name and type below.'
+                : 'Tap the exact spot for the new bin — or use my location.'
               : mode === 'move'
                 ? 'Tap the new spot for this bin.'
                 : 'Tap a bin pin to edit it, or use Add bin.'}
@@ -339,8 +402,8 @@ export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) 
               <Text style={styles.formSub}>
                 {mode === 'add'
                   ? draft
-                    ? `${draft.latitude.toFixed(5)}, ${draft.longitude.toFixed(5)}`
-                    : 'Tap the map above'
+                    ? `${draft.latitude.toFixed(5)}, ${draft.longitude.toFixed(5)}${outsideBoundary ? ' · outside the campus outline (allowed)' : ''}`
+                    : 'Tap the map above or use my location'
                   : `${selectedBin?.reportCount ?? 0} sightings · updated ${timeAgo(selectedBin?.updatedAt)}`}
               </Text>
             </View>
@@ -373,25 +436,29 @@ export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) 
             <Text style={styles.label}>Bin type</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <View style={styles.chipRow}>
-                {(categories ?? []).map((c) => {
-                  const active = activeCategory === c.slug;
-                  return (
-                    <Pressable
-                      key={c.slug}
-                      onPress={() => setCategory(c.slug)}
-                      style={[
-                        styles.chip,
-                        active && { backgroundColor: `${c.color}18`, borderColor: c.color },
-                        !c.active && { opacity: 0.5 },
-                      ]}
-                    >
-                      <Text style={styles.chipEmoji}>{c.emoji}</Text>
-                      <Text style={[styles.chipText, active && { color: c.color, fontWeight: '800' }]}>
-                        {c.name}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+                {(categories ?? [])
+                  .filter((c) => c.active || c.slug === activeCategory)
+                  .map((c) => {
+                    const active = activeCategory === c.slug;
+                    return (
+                      <Pressable
+                        key={c.slug}
+                        onPress={() => setCategory(c.slug)}
+                        style={[
+                          styles.chip,
+                          active && { backgroundColor: `${c.color}18`, borderColor: c.color },
+                          !c.active && { opacity: 0.5 },
+                        ]}
+                      >
+                        <Text style={styles.chipEmoji}>{c.emoji}</Text>
+                        <Text
+                          style={[styles.chipText, active && { color: c.color, fontWeight: '800' }]}
+                        >
+                          {c.name}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
               </View>
             </ScrollView>
           </View>
@@ -408,6 +475,44 @@ export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) 
               scrollable
             />
           </View>
+
+          {mode === 'add' ? (
+            <View style={{ gap: 8 }}>
+              <Text style={styles.label}>Photo (optional)</Text>
+              {photo ? (
+                <View style={styles.photoRow}>
+                  <Image source={{ uri: photo.uri }} style={styles.photoPreview} />
+                  <View style={{ flex: 1, gap: 8 }}>
+                    <Text style={styles.photoTitle}>Photo attached</Text>
+                    <Text style={styles.photoSub}>It becomes the bin&apos;s first sighting photo.</Text>
+                    <Button
+                      title="Remove photo"
+                      variant="ghost"
+                      size="sm"
+                      onPress={() => setPhoto(null)}
+                    />
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.photoButtons}>
+                  <Pressable
+                    onPress={() => void pickPhoto('camera')}
+                    style={({ pressed }) => [styles.photoButton, pressed && { opacity: 0.8 }]}
+                  >
+                    <Ionicons name="camera-outline" size={19} color={COLORS.primary} />
+                    <Text style={styles.photoButtonText}>Camera</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => void pickPhoto('library')}
+                    style={({ pressed }) => [styles.photoButton, pressed && { opacity: 0.8 }]}
+                  >
+                    <Ionicons name="images-outline" size={19} color={COLORS.primary} />
+                    <Text style={styles.photoButtonText}>Photos</Text>
+                  </Pressable>
+                </View>
+              )}
+            </View>
+          ) : null}
 
           <View style={styles.formActions}>
             {selectedBin ? (
@@ -499,6 +604,48 @@ const styles = StyleSheet.create({
     ...SHADOW.sm,
   },
   map: { flex: 1 },
+  locate: {
+    position: 'absolute',
+    right: 10,
+    top: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: COLORS.glass,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...SHADOW.sm,
+  },
+  locateText: { fontSize: 11.5, fontWeight: '700', color: COLORS.primary },
+  photoRow: {
+    flexDirection: 'row',
+    gap: 12,
+    padding: 11,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.surfaceAlt,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  photoPreview: { width: 92, height: 92, borderRadius: 11, backgroundColor: COLORS.surface },
+  photoTitle: { fontSize: 13.5, fontWeight: '700', color: COLORS.text },
+  photoSub: { fontSize: 11.5, lineHeight: 16, color: COLORS.textMuted },
+  photoButtons: { flexDirection: 'row', gap: 9 },
+  photoButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingVertical: 12,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.primarySoft,
+    borderWidth: 1,
+    borderColor: 'rgba(14,124,90,0.18)',
+  },
+  photoButtonText: { fontSize: 13, fontWeight: '700', color: COLORS.primary },
   mapHint: {
     position: 'absolute',
     left: 10,

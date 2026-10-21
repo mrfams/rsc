@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Animated,
   AppState,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -24,14 +25,16 @@ import type { MapMarker } from '@/components/map/types';
 import { IconButton } from '@/components/ui/IconButton';
 import { Notice } from '@/components/ui/Notice';
 import { api } from '@/lib/api-client';
+import { useSession } from '@/lib/auth-client';
 import {
   BOTTOM_NAV_HEIGHT,
   CAMPUS_CENTER,
+  CAMPUS_POLYGONS,
   CATEGORY_COLORS,
   COLORS,
   DEFAULT_MAP_ZOOM,
 } from '@/lib/constants';
-import { haversine } from '@/lib/geo';
+import { haversine, isInsideCampus } from '@/lib/geo';
 import { drainQueue, queueCount } from '@/lib/offline';
 import type { BinDto } from '@/lib/report-service';
 import { RADIUS, SHADOW } from '@/lib/theme';
@@ -44,18 +47,43 @@ type AppConfig = {
 };
 
 type Basemap = 'streets' | 'satellite';
+type CampusId = 'main' | 'south';
+
+function campusCenter(rings: { latitude: number; longitude: number }[][], campus: CampusId) {
+  const points = (campus === 'main' ? rings.slice(0, 1) : rings.slice(1)).flat();
+  if (points.length === 0) return CAMPUS_CENTER;
+  return {
+    latitude: points.reduce((sum, point) => sum + point.latitude, 0) / points.length,
+    longitude: points.reduce((sum, point) => sum + point.longitude, 0) / points.length,
+  };
+}
+
+function binIsOnCampus(
+  bin: { lat: number; lng: number },
+  campus: CampusId,
+  rings: { latitude: number; longitude: number }[][],
+) {
+  if (campus === 'main') return isInsideCampus(bin.lat, bin.lng, rings.slice(0, 1));
+  return isInsideCampus(bin.lat, bin.lng, rings.slice(1));
+}
 
 export default function MapScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ bin?: string }>();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
+  const { data: session } = useSession();
   const hydrated = useHydrated();
   const desktop = hydrated && Platform.OS === 'web' && width >= 1024;
   const narrow = width < 620;
 
   const [mapCenter, setMapCenter] = useState(CAMPUS_CENTER);
-  const [basemap, setBasemap] = useState<Basemap>('streets');
+  const [mapZoom, setMapZoom] = useState(DEFAULT_MAP_ZOOM);
+  const [campus, setCampus] = useState<CampusId>('main');
+  const [campusMenuOpen, setCampusMenuOpen] = useState(false);
+  const [basemap, setBasemap] = useState<Basemap>(
+    Platform.OS === 'web' ? 'satellite' : 'streets',
+  );
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [pending, setPending] = useState(0);
   const [selectedBinId, setSelectedBinId] = useState<string | null>(null);
@@ -103,12 +131,23 @@ export default function MapScreen() {
     queryFn: () => api<AppConfig>('/api/config'),
     refetchOnWindowFocus: true,
   });
-  const categories = config?.categories ?? [];
-  const campusPolygons =
-    config?.campusPolygons?.filter((ring) => ring.length >= 3) ??
-    (config?.campusPolygon && config.campusPolygon.length >= 3
-      ? [config.campusPolygon]
-      : undefined);
+  const categories = useMemo(() => config?.categories ?? [], [config]);
+  const activeCategories = useMemo(
+    () => categories.filter((category) => category.active),
+    [categories],
+  );
+  const activeSlugs = useMemo(
+    () => new Set(activeCategories.map((category) => category.slug)),
+    [activeCategories],
+  );
+  const campusPolygons = useMemo(
+    () =>
+      config?.campusPolygons?.filter((ring) => ring.length >= 3) ??
+      (config?.campusPolygon && config.campusPolygon.length >= 3
+        ? [config.campusPolygon]
+        : CAMPUS_POLYGONS),
+    [config],
+  );
 
   /* Warm up the location permission once; the map still opens on campus. */
   useEffect(() => {
@@ -123,13 +162,13 @@ export default function MapScreen() {
     })();
   }, []);
 
-  /* Deliver any reports queued while offline. */
+  /* Deliver any bins queued while offline. */
   useEffect(() => {
     async function flush() {
       const sent = await drainQueue();
       if (sent > 0) {
         void refetch();
-        setMessage({ tone: 'info', text: `${sent} offline report${sent === 1 ? '' : 's'} uploaded.` });
+        setMessage({ tone: 'info', text: `${sent} offline sighting${sent === 1 ? '' : 's'} uploaded.` });
       }
       setPending(await queueCount());
     }
@@ -185,15 +224,41 @@ export default function MapScreen() {
   const categoryColor = (slug: string) =>
     categories.find((c) => c.slug === slug)?.color ?? CATEGORY_COLORS[slug] ?? COLORS.primary;
 
+  /*
+   * Bins whose type has been switched off are not part of the public map or
+   * its numbers. While config is still loading, keep the pins visible instead
+   * of flashing an empty map.
+   */
+  const activeBins = useMemo(
+    () =>
+      config
+        ? (bins ?? []).filter((bin) => activeSlugs.has(bin.category))
+        : (bins ?? []),
+    [bins, config, activeSlugs],
+  );
+
+  const campusBins = useMemo(
+    () => activeBins.filter((bin) => binIsOnCampus(bin, campus, campusPolygons)),
+    [activeBins, campus, campusPolygons],
+  );
+
+  const campusCounts = useMemo(
+    () => ({
+      main: activeBins.filter((bin) => binIsOnCampus(bin, 'main', campusPolygons)).length,
+      south: activeBins.filter((bin) => binIsOnCampus(bin, 'south', campusPolygons)).length,
+    }),
+    [activeBins, campusPolygons],
+  );
+
   const counts = useMemo(() => {
     const map = new Map<string, number>();
-    for (const bin of bins ?? []) map.set(bin.category, (map.get(bin.category) ?? 0) + 1);
+    for (const bin of campusBins) map.set(bin.category, (map.get(bin.category) ?? 0) + 1);
     return map;
-  }, [bins]);
+  }, [campusBins]);
 
   const visibleBins = useMemo(
-    () => (bins ?? []).filter((bin) => categoryFilter === 'all' || bin.category === categoryFilter),
-    [bins, categoryFilter],
+    () => campusBins.filter((bin) => categoryFilter === 'all' || bin.category === categoryFilter),
+    [campusBins, categoryFilter],
   );
 
   const markers: MapMarker[] = visibleBins.map((bin) => ({
@@ -222,8 +287,10 @@ export default function MapScreen() {
       const next = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
       if (haversine(next, CAMPUS_CENTER) <= 12_000) {
         setMapCenter(next);
+        setMapZoom(17);
       } else {
         setMapCenter(CAMPUS_CENTER);
+        setMapZoom(DEFAULT_MAP_ZOOM);
         setMessage({ tone: 'info', text: 'You are off campus — showing the EMU campus map.' });
       }
     } catch {
@@ -234,16 +301,22 @@ export default function MapScreen() {
   }
 
   const bottomNavSpace = Math.max(insets.bottom, 10) + BOTTOM_NAV_HEIGHT + 8;
-  const activeCategory = categories.find((c) => c.slug === categoryFilter);
+  const activeCategory = activeCategories.find((c) => c.slug === categoryFilter);
+
+  function chooseCampus(next: CampusId) {
+    setCampus(next);
+    setCampusMenuOpen(false);
+    setMapCenter(campusCenter(campusPolygons, next));
+    setMapZoom(next === 'main' ? DEFAULT_MAP_ZOOM : 16);
+  }
 
   return (
     <View style={styles.container}>
       <MapView
         markers={markers}
         center={mapCenter}
-        zoom={DEFAULT_MAP_ZOOM}
+        zoom={mapZoom}
         polygons={campusPolygons}
-        maskOutside
         basemap={basemap}
         onPressMarker={openBin}
         onPressMap={handleMapPress}
@@ -257,14 +330,24 @@ export default function MapScreen() {
       >
         <View style={styles.topRow} pointerEvents="box-none">
           {!desktop ? <MenuButton /> : null}
-          <View style={styles.campusPill}>
+          <Pressable
+            onPress={() => setCampusMenuOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel={`Campus: ${campus === 'main' ? 'Main campus' : 'South campus'}. Change campus`}
+            style={({ pressed }) => [styles.campusPill, pressed && { opacity: 0.85 }]}
+          >
             <View style={styles.liveDot} />
-            <Text style={styles.campusText}>EMU campus</Text>
+            <Text style={styles.campusText}>{campus === 'main' ? 'Main campus' : 'South campus'}</Text>
             <View style={styles.pillDivider} />
             <Text style={styles.campusCount}>
-              {isLoading ? '…' : `${visibleBins.length} bin${visibleBins.length === 1 ? '' : 's'}`}
+              {isLoading ? '…' : `${campusBins.length} bin${campusBins.length === 1 ? '' : 's'}`}
             </Text>
-          </View>
+            <Ionicons
+              name={campusMenuOpen ? 'chevron-up' : 'chevron-down'}
+              size={13}
+              color={COLORS.textMuted}
+            />
+          </Pressable>
           <View style={{ flex: 1 }} />
           {narrow ? (
             <Pressable
@@ -308,11 +391,11 @@ export default function MapScreen() {
           <FilterChip
             label="All"
             emoji="♻️"
-            count={bins?.length ?? 0}
+            count={campusBins.length}
             active={categoryFilter === 'all'}
             onPress={() => setCategoryFilter('all')}
           />
-          {categories.map((c) => (
+          {activeCategories.map((c) => (
             <FilterChip
               key={c.slug}
               label={c.name}
@@ -338,6 +421,43 @@ export default function MapScreen() {
           </View>
         ) : null}
       </View>
+
+      <Modal
+        visible={campusMenuOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCampusMenuOpen(false)}
+        statusBarTranslucent
+      >
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={() => setCampusMenuOpen(false)}
+          accessibilityRole="button"
+          accessibilityLabel="Close campus menu"
+        />
+        <View
+          style={[
+            styles.campusMenu,
+            { top: insets.top + 60, left: 14, width: Math.min(320, width - 28) },
+          ]}
+        >
+          <Text style={styles.campusMenuTitle}>Choose campus</Text>
+          <CampusOption
+            title="Main campus"
+            subtitle="Central campus and faculties"
+            count={campusCounts.main}
+            active={campus === 'main'}
+            onPress={() => chooseCampus('main')}
+          />
+          <CampusOption
+            title="South campus"
+            subtitle="Medical and health campus"
+            count={campusCounts.south}
+            active={campus === 'south'}
+            onPress={() => chooseCampus('south')}
+          />
+        </View>
+      </Modal>
 
       {/* Map controls */}
       <View
@@ -381,7 +501,7 @@ export default function MapScreen() {
           <Text style={styles.emptyText}>
             {activeCategory ? `No ${activeCategory.name.toLowerCase()} bins here yet` : 'No bins yet'}
           </Text>
-          <Pressable onPress={() => router.push('/report/new')}>
+          <Pressable onPress={() => router.push(session?.user ? '/report/new' : '/sign-in')}>
             <Text style={styles.emptyLink}>Add the first one</Text>
           </Pressable>
         </View>
@@ -462,6 +582,42 @@ function LayerChip({
   );
 }
 
+function CampusOption({
+  title,
+  subtitle,
+  count,
+  active,
+  onPress,
+}: {
+  title: string;
+  subtitle: string;
+  count: number;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      style={({ pressed }) => [
+        styles.campusOption,
+        active && styles.campusOptionActive,
+        pressed && { opacity: 0.8 },
+      ]}
+    >
+      <View style={{ flex: 1 }}>
+        <Text style={styles.campusOptionTitle}>{title}</Text>
+        <Text style={styles.campusOptionSub}>{subtitle}</Text>
+      </View>
+      <View style={styles.campusOptionCount}>
+        <Text style={styles.campusOptionCountText}>{count}</Text>
+      </View>
+      {active ? <Ionicons name="checkmark-circle" size={17} color={COLORS.primary} /> : null}
+    </Pressable>
+  );
+}
+
 function FilterChip({
   label,
   emoji,
@@ -530,6 +686,46 @@ const styles = StyleSheet.create({
   campusText: { fontSize: 13, fontWeight: '700', color: COLORS.text },
   pillDivider: { width: 1, height: 14, backgroundColor: COLORS.border },
   campusCount: { fontSize: 12, fontWeight: '600', color: COLORS.textMuted },
+  campusMenu: {
+    position: 'absolute',
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 8,
+    gap: 4,
+    ...SHADOW.lg,
+  },
+  campusMenuTitle: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    letterSpacing: 1,
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    paddingHorizontal: 8,
+    paddingTop: 4,
+    paddingBottom: 3,
+  },
+  campusOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 9,
+    paddingVertical: 9,
+    borderRadius: RADIUS.sm,
+  },
+  campusOptionActive: { backgroundColor: COLORS.primarySoft },
+  campusOptionTitle: { fontSize: 13.5, fontWeight: '700', color: COLORS.text },
+  campusOptionSub: { fontSize: 11, color: COLORS.textMuted, marginTop: 1 },
+  campusOptionCount: {
+    minWidth: 24,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: COLORS.surfaceAlt,
+    alignItems: 'center',
+  },
+  campusOptionCountText: { fontSize: 11, fontWeight: '700', color: COLORS.textMuted },
   layerToggle: {
     flexDirection: 'row',
     alignItems: 'center',

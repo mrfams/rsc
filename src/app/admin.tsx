@@ -1,12 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Location from 'expo-location';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -20,6 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AdminMapTab } from '@/components/admin/AdminMapTab';
 import { BinDetails } from '@/components/bins/BinDetails';
+import { BrandMark } from '@/components/ui/BrandMark';
 import MapView from '@/components/map/MapView';
 import type { MapMarker } from '@/components/map/types';
 import { Button } from '@/components/ui/Button';
@@ -127,15 +130,58 @@ const SWATCHES = [
 
 type NoticeState = { tone: 'error' | 'success' | 'info'; text: string } | null;
 
+const STATUSES: BinStatus[] = ['pending', 'verified', 'disputed', 'removed'];
+
+function isTab(value: unknown): value is Tab {
+  return typeof value === 'string' && TABS.some((item) => item.key === value);
+}
+
+function isBinsFilter(value: unknown): value is 'all' | BinStatus {
+  return value === 'all' || (typeof value === 'string' && STATUSES.includes(value as BinStatus));
+}
+
 export default function AdminScreen() {
+  return <AdminWorkspace />;
+}
+
+/** Shared workspace so /admin/review can open straight into the pending queue. */
+export function AdminWorkspace({
+  initialTab = 'overview',
+  initialFilter = 'all',
+}: {
+  initialTab?: Tab;
+  initialFilter?: 'all' | BinStatus;
+} = {}) {
   const router = useRouter();
+  const pathname = usePathname();
+  const params = useLocalSearchParams<{ tab?: string; filter?: string }>();
   const { data: me, isLoading } = useMe();
-  const [tab, setTab] = useState<Tab>('overview');
+  const tab: Tab = isTab(params.tab) ? params.tab : initialTab;
+  const binsFilter: 'all' | BinStatus = isBinsFilter(params.filter)
+    ? params.filter
+    : initialFilter;
   const [selectedBinId, setSelectedBinId] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const { width } = useWindowDimensions();
   const desktop = width >= 1024;
   const current = TABS.find((item) => item.key === tab) ?? TABS[0];
+
+  /** Keep the section in the URL so Review, Profile and Admin stay in sync. */
+  function selectTab(next: Tab, nextFilter?: 'all' | BinStatus) {
+    const nextParams = {
+      tab: next,
+      filter: next === 'bins' ? (nextFilter ?? 'all') : undefined,
+    };
+    if (pathname === '/admin') {
+      router.setParams(nextParams);
+    } else {
+      router.replace({ pathname: '/admin', params: nextParams });
+    }
+  }
+
+  function changeBinsFilter(next: 'all' | BinStatus) {
+    selectTab('bins', next);
+  }
 
   if (isLoading) {
     return (
@@ -205,17 +251,28 @@ export default function AdminScreen() {
         name={me?.user.name ?? ''}
         email={me?.user.email ?? ''}
         onSelect={(next) => {
-          setTab(next);
+          selectTab(next);
           setMenuOpen(false);
         }}
       />
 
       <View style={styles.body}>
         {tab === 'overview' ? (
-          <OverviewTab onOpenBin={setSelectedBinId} onGoTab={setTab} />
+          <OverviewTab
+            onOpenBin={setSelectedBinId}
+            onGoTab={selectTab}
+            onOpenBins={(filter) => selectTab('bins', filter)}
+            onOpenPeople={() => selectTab('people')}
+          />
         ) : null}
         {tab === 'map' ? <AdminMapTab onOpenBin={setSelectedBinId} /> : null}
-        {tab === 'bins' ? <BinsTab onOpenBin={setSelectedBinId} /> : null}
+        {tab === 'bins' ? (
+          <BinsTab
+            onOpenBin={setSelectedBinId}
+            filter={binsFilter}
+            onFilterChange={changeBinsFilter}
+          />
+        ) : null}
         {tab === 'types' ? <TypesTab /> : null}
         {tab === 'people' ? <PeopleTab /> : null}
         {tab === 'geofence' ? <GeofenceTab /> : null}
@@ -249,9 +306,7 @@ function AdminMenu({
     <Drawer open={open} onClose={onClose} label="admin menu">
       <View style={styles.menuPanel}>
         <View style={styles.menuHeader}>
-          <View style={styles.menuBrandMark}>
-            <Ionicons name="shield-checkmark" size={20} color="#FFFFFF" />
-          </View>
+          <BrandMark size={38} radius={12} />
           <View style={{ flex: 1 }}>
             <Text style={styles.menuTitle}>Admin workspace</Text>
             <Text style={styles.menuSub} numberOfLines={1}>
@@ -313,9 +368,13 @@ function AdminMenu({
 function OverviewTab({
   onOpenBin,
   onGoTab,
+  onOpenBins,
+  onOpenPeople,
 }: {
   onOpenBin: (id: string) => void;
   onGoTab: (tab: Tab) => void;
+  onOpenBins: (filter: 'all' | BinStatus) => void;
+  onOpenPeople: () => void;
 }) {
   const {
     data: bins,
@@ -336,7 +395,14 @@ function OverviewTab({
     queryFn: () => api<CategoryDto[]>('/api/admin/categories'),
   });
 
-  const list = bins ?? [];
+  // Cards and map-health numbers ignore bins whose type has been switched off.
+  const allBins = bins ?? [];
+  const activeSlugs = new Set(
+    (categories ?? []).filter((category) => category.active).map((category) => category.slug),
+  );
+  const list = categories
+    ? allBins.filter((bin) => activeSlugs.has(bin.category))
+    : allBins;
   const pending = list.filter((b) => b.status === 'pending').length;
   const verified = list.filter((b) => b.status === 'verified').length;
   const disputed = list.filter((b) => b.status === 'disputed').length;
@@ -368,11 +434,39 @@ function OverviewTab({
         />
       ) : null}
 
+      <Text style={styles.muted}>
+        Counts include bins whose type is switched on; hidden types stay visible in the Bins list.
+      </Text>
+
       <View style={styles.statsGrid}>
-        <StatCard label="Total bins" value={String(list.length)} icon="trash-outline" tone={COLORS.primary} />
-        <StatCard label="Awaiting review" value={String(pending)} icon="time-outline" tone={COLORS.warning} />
-        <StatCard label="Verified" value={String(verified)} icon="checkmark-circle-outline" tone={COLORS.success} />
-        <StatCard label="Members" value={String(users?.length ?? 0)} icon="people-outline" tone={COLORS.info} />
+        <StatCard
+          label="Total bins"
+          value={String(list.length)}
+          icon="trash-outline"
+          tone={COLORS.primary}
+          onPress={() => onOpenBins('all')}
+        />
+        <StatCard
+          label="Awaiting review"
+          value={String(pending)}
+          icon="time-outline"
+          tone={COLORS.warning}
+          onPress={() => onOpenBins('pending')}
+        />
+        <StatCard
+          label="Verified"
+          value={String(verified)}
+          icon="checkmark-circle-outline"
+          tone={COLORS.success}
+          onPress={() => onOpenBins('verified')}
+        />
+        <StatCard
+          label="Members"
+          value={String(users?.length ?? 0)}
+          icon="people-outline"
+          tone={COLORS.info}
+          onPress={onOpenPeople}
+        />
       </View>
 
       <Card style={{ gap: 12 }}>
@@ -470,30 +564,47 @@ function StatCard({
   value,
   icon,
   tone,
+  onPress,
 }: {
   label: string;
   value: string;
   icon: keyof typeof Ionicons.glyphMap;
   tone: string;
+  onPress: () => void;
 }) {
   return (
-    <View style={styles.statCard}>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}: ${value}. Open ${label.toLowerCase()}`}
+      style={({ pressed }) => [styles.statCard, pressed && { opacity: 0.75 }]}
+    >
       <View style={[styles.statIcon, { backgroundColor: `${tone}16` }]}>
         <Ionicons name={icon} size={17} color={tone} />
       </View>
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
-    </View>
+      <View style={styles.statArrow}>
+        <Ionicons name="chevron-forward" size={14} color={COLORS.textMuted} />
+      </View>
+    </Pressable>
   );
 }
 
 /* ---------------------------------- Bins ---------------------------------- */
 
-function BinsTab({ onOpenBin }: { onOpenBin: (id: string) => void }) {
+function BinsTab({
+  onOpenBin,
+  filter,
+  onFilterChange,
+}: {
+  onOpenBin: (id: string) => void;
+  filter: 'all' | BinStatus;
+  onFilterChange: (filter: 'all' | BinStatus) => void;
+}) {
   const queryClient = useQueryClient();
   const { toast } = useFeedback();
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'all' | BinStatus>('all');
   const [notice, setNotice] = useState<NoticeState>(null);
 
   const { data, isLoading, refetch, isFetching } = useQuery({
@@ -564,7 +675,7 @@ function BinsTab({ onOpenBin }: { onOpenBin: (id: string) => void }) {
               { key: 'removed' as const, label: 'Removed' },
             ]}
             value={filter}
-            onChange={setFilter}
+            onChange={onFilterChange}
             scrollable
           />
           {notice ? (
@@ -629,6 +740,8 @@ function TypesTab() {
   const [notice, setNotice] = useState<NoticeState>(null);
   const [mode, setMode] = useState<'new' | 'edit' | null>(null);
   const [editingSlug, setEditingSlug] = useState<string | null>(null);
+  const [editorError, setEditorError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [emoji, setEmoji] = useState('♻️');
@@ -648,6 +761,9 @@ function TypesTab() {
   function resetForm() {
     setMode(null);
     setEditingSlug(null);
+    setEditorError(null);
+    setConfirmDelete(false);
+    setNotice(null);
     setName('');
     setSlug('');
     setEmoji('♻️');
@@ -661,6 +777,7 @@ function TypesTab() {
   }
 
   function startEdit(category: CategoryDto) {
+    resetForm();
     setMode('edit');
     setEditingSlug(category.slug);
     setName(category.name);
@@ -680,13 +797,13 @@ function TypesTab() {
       showDialog({
         tone: 'success',
         title: 'Bin type created',
-        message: `${name.trim() || 'The new type'} is now available in filters and the report form.`,
+        message: `${name.trim() || 'The new type'} is now available in filters and the add-bin form.`,
         confirmLabel: 'Great',
       });
       resetForm();
       invalidate();
     },
-    onError: (err) => setNotice({ tone: 'error', text: err.message }),
+    onError: (err) => setEditorError(err.message),
   });
 
   const patch = useMutation({
@@ -697,7 +814,25 @@ function TypesTab() {
       resetForm();
       invalidate();
     },
-    onError: (err) => setNotice({ tone: 'error', text: err.message }),
+    onError: (err) => setEditorError(err.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: (slugToDelete: string) =>
+      api('/api/admin/categories', { method: 'DELETE', json: { slug: slugToDelete } }),
+    onSuccess: () => {
+      toast({
+        tone: 'success',
+        title: 'Bin type deleted',
+        message: 'It is gone from the filters and the report picker.',
+      });
+      resetForm();
+      invalidate();
+    },
+    onError: (err) => {
+      setConfirmDelete(false);
+      setEditorError(err.message);
+    },
   });
 
   // Toggling visibility from the list must not reset an open editor.
@@ -721,22 +856,18 @@ function TypesTab() {
   });
 
   const canSubmit = name.trim().length > 0 && (mode === 'edit' || slug.trim().length > 0);
+  const editing = mode === 'edit';
 
   return (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <View style={styles.listHeaderRow}>
-        <View>
-          <Text style={styles.sectionTitle}>Bin types</Text>
-          <Text style={styles.sectionSub}>
-            These power the map filters and the report picker.
-          </Text>
-        </View>
+        <Text style={[styles.sectionTitle, { flex: 1 }]}>Bin types</Text>
         <Button
-          title={mode ? 'Close editor' : 'New type'}
-          icon={mode ? 'close' : 'add'}
+          title="New type"
+          icon="add"
           size="sm"
-          variant={mode ? 'secondary' : 'primary'}
-          onPress={() => (mode ? resetForm() : startCreate())}
+          onPress={startCreate}
+          style={styles.headerButton}
         />
       </View>
 
@@ -744,10 +875,59 @@ function TypesTab() {
         <Notice tone={notice.tone} message={notice.text} onDismiss={() => setNotice(null)} />
       ) : null}
 
-      {mode ? (
-        <Card style={{ gap: 12 }}>
-          <Text style={styles.cardTitle}>{mode === 'new' ? 'Create a bin type' : `Edit ${editingSlug}`}</Text>
-          <View style={styles.formRow}>
+      <Modal
+        visible={mode !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={resetForm}
+        statusBarTranslucent
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.editorRoot}
+        >
+          <Pressable
+            style={styles.editorBackdrop}
+            onPress={resetForm}
+            accessibilityRole="button"
+            accessibilityLabel="Close bin type editor"
+          />
+          <View style={styles.editorCard}>
+            <ScrollView
+              contentContainerStyle={styles.editorContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.editorHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.editorTitle}>
+                    {mode === 'new' ? 'New bin type' : 'Edit bin type'}
+                  </Text>
+                  <Text style={styles.editorSub}>
+                    {mode === 'new'
+                      ? 'It appears in filters and the report picker immediately.'
+                      : editingSlug}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={resetForm}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close"
+                  style={({ pressed }) => [styles.editorClose, pressed && { opacity: 0.6 }]}
+                >
+                  <Ionicons name="close" size={18} color={COLORS.text} />
+                </Pressable>
+              </View>
+
+              {editorError ? (
+                <Notice
+                  tone="error"
+                  message={editorError}
+                  onDismiss={() => setEditorError(null)}
+                />
+              ) : null}
+
+              <View style={styles.formRow}>
             <View style={{ flex: 2 }}>
               <Field label="Name" value={name} onChangeText={setName} placeholder="Food waste" />
             </View>
@@ -809,28 +989,66 @@ function TypesTab() {
               />
             </View>
           ) : null}
-          <View style={styles.formActions}>
-            <Button title="Cancel" variant="secondary" size="sm" onPress={resetForm} style={{ flex: 1 }} />
-            <Button
-              title={mode === 'new' ? 'Create type' : 'Save changes'}
-              size="sm"
-              loading={create.isPending || patch.isPending}
-              disabled={!canSubmit}
-              onPress={() => {
-                if (mode === 'new') {
-                  create.mutate();
-                } else if (editingSlug) {
-                  patch.mutate({
-                    slug: editingSlug,
-                    body: { name, emoji, color, active },
-                  });
-                }
-              }}
-              style={{ flex: 1 }}
-            />
+              {confirmDelete ? (
+                <View style={styles.deletePanel}>
+                  <Ionicons name="warning-outline" size={18} color={COLORS.danger} />
+                  <Text style={styles.deletePanelText}>
+                    Deleting “{name || editingSlug}” cannot be undone. Types used by existing bins
+                    cannot be deleted — hide them instead.
+                  </Text>
+                  <View style={styles.deletePanelActions}>
+                    <Button
+                      title="Keep type"
+                      variant="secondary"
+                      size="sm"
+                      onPress={() => setConfirmDelete(false)}
+                    />
+                    <Button
+                      title="Delete permanently"
+                      variant="danger"
+                      size="sm"
+                      loading={remove.isPending}
+                      onPress={() => {
+                        if (editingSlug) remove.mutate(editingSlug);
+                      }}
+                    />
+                  </View>
+                </View>
+              ) : null}
+
+              <View style={styles.editorActions}>
+                {editing ? (
+                  <Button
+                    title="Delete"
+                    variant="danger"
+                    size="sm"
+                    icon="trash-outline"
+                    onPress={() => setConfirmDelete(true)}
+                  />
+                ) : null}
+                <View style={{ flex: 1 }} />
+                <Button title="Cancel" variant="secondary" size="sm" onPress={resetForm} />
+                <Button
+                  title={editing ? 'Save changes' : 'Create type'}
+                  size="sm"
+                  loading={create.isPending || patch.isPending}
+                  disabled={!canSubmit}
+                  onPress={() => {
+                    if (mode === 'new') {
+                      create.mutate();
+                    } else if (editingSlug) {
+                      patch.mutate({
+                        slug: editingSlug,
+                        body: { name, emoji, color, active },
+                      });
+                    }
+                  }}
+                />
+              </View>
+            </ScrollView>
           </View>
-        </Card>
-      ) : null}
+        </KeyboardAvoidingView>
+      </Modal>
 
       {isLoading ? <ActivityIndicator color={COLORS.primary} /> : null}
 
@@ -1000,9 +1218,12 @@ function GeofenceTab() {
   const [polygons, setPolygons] = useState<CampusPoint[][] | null>(null);
   const [selectedRing, setSelectedRing] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [focus, setFocus] = useState<CampusPoint | null>(null);
   const [moveMode, setMoveMode] = useState(false);
   const [drawMode, setDrawMode] = useState(false);
-  const [basemap, setBasemap] = useState<'streets' | 'satellite'>('streets');
+  const [basemap, setBasemap] = useState<'streets' | 'satellite'>(
+    Platform.OS === 'web' ? 'satellite' : 'streets',
+  );
   const lastMarkerPress = useRef(0);
 
   const { data, isLoading, refetch } = useQuery({
@@ -1022,12 +1243,13 @@ function GeofenceTab() {
     [editingPolygons, ringIndex],
   );
 
-  // The map must not recentre on every added point. This is derived from the
-  // saved ring (not the local draft) so drawing stays calm and predictable.
-  const mapCenter = useMemo(() => {
+  // The map must not recentre on every added point. The area centre is derived
+  // from the saved ring; selecting a vertex temporarily centres on that vertex.
+  const areaCenter = useMemo(() => {
     const ring = serverPolygons[ringIndex] ?? [];
     return ring.length >= 3 ? centroid(ring) : CAMPUS_CENTER;
   }, [serverPolygons, ringIndex]);
+  const mapCenter = focus ?? areaCenter;
 
   function setRing(next: CampusPoint[]) {
     setPolygons(editingPolygons.map((ring, index) => (index === ringIndex ? next : ring)));
@@ -1058,6 +1280,7 @@ function GeofenceTab() {
       setNotice(null);
       setPolygons(null);
       setSelectedIndex(null);
+      setFocus(null);
       setMoveMode(false);
       setDrawMode(false);
       queryClient.invalidateQueries({ queryKey: ['admin-campus'] });
@@ -1067,7 +1290,7 @@ function GeofenceTab() {
         tone: 'success',
         title: 'Geofence saved',
         message:
-          'Reports, the report form and the public map now use these exact boundaries. No deploy needed.',
+          'Bins, the add-bin form and the public map now use these exact boundaries. No deploy needed.',
         confirmLabel: 'Great',
       });
     },
@@ -1079,6 +1302,15 @@ function GeofenceTab() {
 
   function updatePoint(index: number, point: CampusPoint) {
     setRing(editing.map((p, i) => (i === index ? point : p)));
+    setFocus(point);
+    setMoveMode(false);
+  }
+
+  function selectPoint(index: number) {
+    const point = editing[index];
+    if (!point) return;
+    setSelectedIndex(index);
+    setFocus(point);
     setMoveMode(false);
   }
 
@@ -1137,6 +1369,7 @@ function GeofenceTab() {
         setPolygons(next);
         setSelectedRing(Math.max(0, ringIndex - 1));
         setSelectedIndex(null);
+        setFocus(null);
         setDrawMode(false);
         setMoveMode(false);
         toast({ tone: 'info', title: 'Area removed', message: 'Save the geofence to apply it.' });
@@ -1144,11 +1377,35 @@ function GeofenceTab() {
     });
   }
 
+  function removePoint(index: number) {
+    const point = editing[index];
+    if (!point) return;
+    confirm({
+      tone: 'warning',
+      title: `Delete point ${index + 1}?`,
+      message: `Point ${index + 1} at ${point.latitude.toFixed(5)}, ${point.longitude.toFixed(
+        5,
+      )} will be removed from area ${ringIndex + 1}. The outline closes around the remaining points.`,
+      confirmLabel: 'Delete point',
+      cancelLabel: 'Keep it',
+      destructive: true,
+      onConfirm: () => {
+        setRing(editing.filter((_, i) => i !== index));
+        setSelectedIndex((current) => {
+          if (current === null) return null;
+          if (current === index) return null;
+          return current > index ? current - 1 : current;
+        });
+        setFocus(null);
+        setMoveMode(false);
+        toast({ tone: 'info', title: `Point ${index + 1} removed`, message: 'Save the geofence to apply it.' });
+      },
+    });
+  }
+
   function removeSelected() {
     if (selectedIndex === null) return;
-    setRing(editing.filter((_, i) => i !== selectedIndex));
-    setSelectedIndex(null);
-    setMoveMode(false);
+    removePoint(selectedIndex);
   }
 
   function undo() {
@@ -1167,11 +1424,10 @@ function GeofenceTab() {
         return;
       }
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      setRing([
-        ...editing,
-        { latitude: pos.coords.latitude, longitude: pos.coords.longitude },
-      ]);
+      const point = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+      setRing([...editing, point]);
       setSelectedIndex(editing.length);
+      setFocus(point);
     } catch {
       setNotice({ tone: 'error', text: 'Could not get your location.' });
     }
@@ -1187,8 +1443,9 @@ function GeofenceTab() {
         <View style={{ flex: 1 }}>
           <Text style={styles.sectionTitle}>Campus geofence</Text>
           <Text style={styles.sectionSub}>
-            Reports must land inside one of these areas. Tap the map to add corners — coordinates
-            are optional, and the full campus (including the medical campus) is covered.
+            The outline is a visual reference for the campus edge. Every numbered corner is listed
+            below so you can identify it, zoom to it, and delete it before saving. Bins can still be
+            placed anywhere — inside or outside the outline.
           </Text>
         </View>
         <View style={styles.pointBadge}>
@@ -1201,8 +1458,9 @@ function GeofenceTab() {
       <View style={styles.geoTip}>
         <Ionicons name="bulb-outline" size={16} color={COLORS.info} />
         <Text style={styles.geoTipText}>
-          Tap “Draw corners”, then place points around the campus on the map. Point numbers match the
-          list below. You never need to type coordinates.
+          Tap “Draw corners”, then place points around the campus on the map. Numbers on the map match
+          the numbered list below — tap any point to see exactly which corner it is before deleting
+          it. You never need to type coordinates.
         </Text>
       </View>
 
@@ -1226,6 +1484,7 @@ function GeofenceTab() {
         onChange={(key) => {
           setSelectedRing(Number(key));
           setSelectedIndex(null);
+          setFocus(null);
           setMoveMode(false);
         }}
         scrollable
@@ -1235,17 +1494,14 @@ function GeofenceTab() {
         <MapView
           markers={markers}
           center={mapCenter}
-          zoom={15}
+          zoom={focus ? 17 : 15}
           polygons={mapPolygons}
           basemap={basemap}
           onPressMap={onMapPress}
           onPressMarker={(id) => {
             lastMarkerPress.current = Date.now();
             const index = Number(id.replace('pt-', ''));
-            if (Number.isInteger(index)) {
-              setSelectedIndex(index);
-              setMoveMode(false);
-            }
+            if (Number.isInteger(index)) selectPoint(index);
           }}
           style={styles.geoMap}
         />
@@ -1294,16 +1550,99 @@ function GeofenceTab() {
               ? 'Tap the map to move the selected point.'
               : drawMode
                 ? 'Tap to place the next corner · tap a number to select a point.'
-                : 'Tap a numbered point to select it, or switch on Draw corners.'}
+                : 'Tap a number on the map or in the list below to identify that corner.'}
           </Text>
         </View>
       </View>
 
+      <Card padded={false}>
+        <View style={styles.vertexHeader}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardTitle}>
+              Area {ringIndex + 1} corners · {editing.length} point{editing.length === 1 ? '' : 's'}
+            </Text>
+            <Text style={styles.vertexHint}>
+              Tap a row to highlight that corner on the map. The last point closes back to point 1.
+            </Text>
+          </View>
+          {editing.length > 0 ? (
+            <View style={styles.pointBadge}>
+              <Text style={styles.pointBadgeText}>1 → {editing.length} → 1</Text>
+            </View>
+          ) : null}
+        </View>
+        {editing.length === 0 ? (
+          <View style={styles.vertexEmpty}>
+            <Ionicons name="pencil-outline" size={18} color={COLORS.textMuted} />
+            <Text style={styles.vertexEmptyText}>
+              No corners yet. Switch on Draw corners and tap the map, or use “Add an area”.
+            </Text>
+          </View>
+        ) : (
+          <ScrollView
+            style={styles.vertexScroll}
+            contentContainerStyle={{ paddingBottom: 4 }}
+            nestedScrollEnabled
+            showsVerticalScrollIndicator
+          >
+            {editing.map((point, index) => {
+              const active = selectedIndex === index;
+              return (
+                <Pressable
+                  key={`vertex-${index}`}
+                  onPress={() => selectPoint(index)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Select point ${index + 1}`}
+                  accessibilityState={{ selected: active }}
+                  style={({ pressed }) => [
+                    styles.vertexRow,
+                    active && styles.vertexRowActive,
+                    pressed && { opacity: 0.75 },
+                  ]}
+                >
+                  <View style={[styles.vertexDot, active && styles.vertexDotActive]}>
+                    <Text style={styles.vertexDotText}>{index + 1}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.vertexTitle}>
+                      Point {index + 1}
+                      {index === 0 ? ' · start' : index === editing.length - 1 ? ' · end' : ''}
+                    </Text>
+                    <Text style={styles.vertexCoords}>
+                      {point.latitude.toFixed(5)}, {point.longitude.toFixed(5)}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={(event) => {
+                      event.stopPropagation();
+                      removePoint(index);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Delete point ${index + 1}`}
+                    hitSlop={8}
+                    style={({ pressed }) => [styles.vertexDelete, pressed && { opacity: 0.6 }]}
+                  >
+                    <Ionicons name="trash-outline" size={16} color={COLORS.danger} />
+                  </Pressable>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        )}
+      </Card>
+
       {selected ? (
         <Card style={{ gap: 10 }}>
           <View style={styles.cardHeaderRow}>
-            <Text style={styles.cardTitle}>Point {selectedIndex! + 1} of {editing.length}</Text>
-            <Pressable onPress={() => setSelectedIndex(null)}>
+            <Text style={styles.cardTitle}>
+              Point {selectedIndex! + 1} of {editing.length} · Area {ringIndex + 1}
+            </Text>
+            <Pressable
+              onPress={() => {
+                setSelectedIndex(null);
+                setFocus(null);
+              }}
+            >
               <Text style={styles.textLink}>Deselect</Text>
             </Pressable>
           </View>
@@ -1369,6 +1708,7 @@ function GeofenceTab() {
             setPolygons(data?.defaultPolygons ?? CAMPUS_POLYGONS);
             setSelectedRing(0);
             setSelectedIndex(null);
+            setFocus(null);
             setDrawMode(false);
             setMoveMode(false);
             setNotice({
@@ -1403,7 +1743,7 @@ function GeofenceTab() {
               } with ${editingPolygons.reduce(
                 (total, ring) => total + ring.length,
                 0,
-              )} points will become the reportable campus. Bins outside it are hidden from the public map.`,
+              )} points will become the campus outline. Bins and reports work anywhere, so this only changes the outline shown on maps.`,
               confirmLabel: 'Save & apply',
               cancelLabel: 'Keep editing',
               onConfirm: () => save.mutate(),
@@ -1516,14 +1856,6 @@ const styles = StyleSheet.create({
     paddingTop: 4,
     paddingBottom: 6,
   },
-  menuBrandMark: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
-    backgroundColor: COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   menuTitle: { fontSize: 16, fontWeight: '800', color: COLORS.text },
   menuSub: { fontSize: 11.5, color: COLORS.textMuted, marginTop: 1 },
   menuClose: {
@@ -1623,6 +1955,7 @@ const styles = StyleSheet.create({
   },
   statValue: { fontSize: 22, fontWeight: '800', color: COLORS.text, letterSpacing: -0.6 },
   statLabel: { fontSize: 11.5, color: COLORS.textMuted, fontWeight: '600' },
+  statArrow: { position: 'absolute', top: 12, right: 12 },
 
   cardTitle: { fontSize: 15, fontWeight: '800', color: COLORS.text },
   cardMeta: { fontSize: 11.5, color: COLORS.textMuted },
@@ -1735,6 +2068,51 @@ const styles = StyleSheet.create({
   switchTitle: { fontSize: 13.5, fontWeight: '700', color: COLORS.text },
   switchSub: { fontSize: 11.5, color: COLORS.textMuted, marginTop: 1 },
   formActions: { flexDirection: 'row', gap: 8 },
+  headerButton: { flexShrink: 0 },
+
+  editorRoot: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 18 },
+  editorBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: COLORS.overlay,
+  },
+  editorCard: {
+    width: '100%',
+    maxWidth: 520,
+    maxHeight: '88%',
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.xl,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    overflow: 'hidden',
+    ...SHADOW.lg,
+  },
+  editorContent: { padding: 18, gap: 13 },
+  editorHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  editorTitle: { fontSize: 19, fontWeight: '800', color: COLORS.text, letterSpacing: -0.4 },
+  editorSub: { fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
+  editorClose: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: COLORS.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editorActions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  deletePanel: {
+    gap: 7,
+    padding: 12,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.dangerSoft,
+    borderWidth: 1,
+    borderColor: 'rgba(217,45,32,0.18)',
+  },
+  deletePanelText: { fontSize: 12, lineHeight: 17, color: COLORS.danger },
+  deletePanelActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
 
   typeCard: {
     flexDirection: 'row',
@@ -1859,6 +2237,60 @@ const styles = StyleSheet.create({
   },
   geoHintText: { flex: 1, fontSize: 11.5, fontWeight: '600', color: COLORS.primary },
   coords: { fontSize: 12, color: COLORS.textMuted, fontVariant: ['tabular-nums'] },
+  vertexHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 9,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  vertexHint: { fontSize: 11.5, lineHeight: 16, color: COLORS.textMuted, marginTop: 2 },
+  vertexScroll: { maxHeight: 260 },
+  vertexRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  vertexRowActive: { backgroundColor: COLORS.primarySoft },
+  vertexDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#334155',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  vertexDotActive: { backgroundColor: COLORS.primary },
+  vertexDotText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
+  vertexTitle: { fontSize: 12.5, fontWeight: '700', color: COLORS.text },
+  vertexCoords: {
+    fontSize: 11.5,
+    color: COLORS.textMuted,
+    fontVariant: ['tabular-nums'],
+    marginTop: 1,
+  },
+  vertexDelete: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.dangerSoft,
+  },
+  vertexEmpty: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    padding: 14,
+  },
+  vertexEmptyText: { flex: 1, fontSize: 12, lineHeight: 17, color: COLORS.textMuted },
   geoActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
   geoSaveRow: {
     flexDirection: 'row',

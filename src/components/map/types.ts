@@ -17,15 +17,6 @@ export type MapMarker = {
 
 export type MapPolygon = { latitude: number; longitude: number }[];
 
-export type MapLabel = {
-  id: string;
-  name: string;
-  latitude: number;
-  longitude: number;
-  /** 1 = always visible; 2 = shown when zoomed in. */
-  priority?: 1 | 2;
-};
-
 export type MapViewProps = {
   markers: MapMarker[];
   center?: { latitude: number; longitude: number };
@@ -39,8 +30,6 @@ export type MapViewProps = {
   polygons?: MapPolygon[];
   /** Dim everything outside the polygon. */
   maskOutside?: boolean;
-  /** Building/place labels drawn above the basemap. */
-  labels?: MapLabel[];
   /** Basemap style; honoured on web (Leaflet) and native (MapLibre). */
   basemap?: 'streets' | 'satellite';
   /** Fit the viewport to the polygon (used by the geofence editor). */

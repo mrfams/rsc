@@ -42,6 +42,8 @@ export const adminBinCreateSchema = z.object({
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
   status: binStatusSchema.optional(),
+  /** Optional photo of the real bin; stored as the admin's first sighting. */
+  photoBase64: z.string().max(600_000).optional(),
 });
 
 export const adminBinUpdateSchema = z

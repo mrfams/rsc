@@ -2,17 +2,17 @@
  * Server-side service layer for bins and reports.
  */
 
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, ne, sql } from 'drizzle-orm';
 
 import { put } from '@vercel/blob';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 import { db } from '@/lib/db';
-import { haversine, isInsideCampus, placeNameFor } from '@/lib/geo';
+import { haversine, placeNameFor } from '@/lib/geo';
 import { isReportableCategory } from '@/lib/categories';
-import { getCampusPolygons } from '@/lib/campus-config';
-import { bins, reports, type BinCategory, type BinStatus } from '@/lib/db/schema';
+import { bins, reports, user, type BinCategory, type BinStatus } from '@/lib/db/schema';
+import { POINT_RULES, type ContributionStats, type PublicLeaderboard } from '@/lib/points';
 import { sendToUsers } from '@/lib/push';
 import type { ReportInput } from '@/lib/validation';
 
@@ -52,7 +52,11 @@ export type ReportDto = {
   bin?: BinDto;
 };
 
-export type BinDetailDto = BinDto & { reports: ReportDto[] };
+export type BinDetailDto = BinDto & {
+  reports: ReportDto[];
+  /** True when the signed-in viewer already sighted this bin. */
+  hasSighted?: boolean;
+};
 
 function photoToUrl(photoPath: string | null): string | null {
   if (!photoPath) return null;
@@ -121,23 +125,18 @@ const sqlBins = {
 };
 
 /**
- * Public map data. Bins outside the current campus geofence are hidden so a
- * stale/legacy polygon or an imported dataset can never scatter pins across
- * the sea. Admin moderation still lists every row.
+ * Public map data. Every non-removed bin is listed, including bins placed
+ * outside the campus outline: the geofence is a visual reference, never a
+ * limit on where someone may add or see a bin.
  */
 export async function listBins(): Promise<BinDto[]> {
-  const [rows, campusPolygons] = await Promise.all([
-    db
-      .select(sqlBins)
-      .from(bins)
-      .where(sql`${bins.status} <> 'removed'`)
-      .orderBy(desc(bins.createdAt)),
-    getCampusPolygons(),
-  ]);
+  const rows = await db
+    .select(sqlBins)
+    .from(bins)
+    .where(sql`${bins.status} <> 'removed'`)
+    .orderBy(desc(bins.createdAt));
 
-  return rows
-    .filter((row) => isInsideCampus(row.lat, row.lng, campusPolygons))
-    .map(mapBin);
+  return rows.map(mapBin);
 }
 
 /** Admin-only: every bin including removed ones, for moderation. */
@@ -205,12 +204,6 @@ export async function createReport(
   user: { id: string; email: string },
   input: ReportInput,
 ): Promise<ReportDto> {
-  const campusPolygons = await getCampusPolygons();
-  if (!isInsideCampus(input.lat, input.lng, campusPolygons)) {
-    throw new Response('Bins must be inside the highlighted campus boundary', {
-      status: 422,
-    });
-  }
   if (!(await isReportableCategory(input.category))) {
     throw new Response('Unknown or inactive category', { status: 422 });
   }
@@ -267,6 +260,13 @@ export async function createReport(
     .where(eq(bins.id, binId));
 
   await refreshBinStatusFromWave(binId);
+
+  // Best-effort: tell the contributor when this action moves them up.
+  try {
+    await notifyLeaderboardClimb(user.id, inserted.id);
+  } catch {
+    // leaderboard notifications are best-effort
+  }
 
   // Best-effort notifications to previous contributors about this sighting.
   try {
@@ -339,18 +339,34 @@ export async function getReport(id: string): Promise<ReportDto | null> {
 }
 
 /** Bin page data: the bin plus its recent sighting history. */
-export async function getBinWithReports(id: string): Promise<BinDetailDto | null> {
+export async function getBinWithReports(
+  id: string,
+  viewerId?: string,
+): Promise<BinDetailDto | null> {
   const binRows = await db.select(sqlBins).from(bins).where(eq(bins.id, id)).limit(1);
   if (binRows.length === 0) return null;
 
-  const repRows = await db
-    .select({ report: reports })
-    .from(reports)
-    .where(eq(reports.binId, id))
-    .orderBy(desc(reports.createdAt))
-    .limit(30);
+  const [repRows, mineRows] = await Promise.all([
+    db
+      .select({ report: reports })
+      .from(reports)
+      .where(eq(reports.binId, id))
+      .orderBy(desc(reports.createdAt))
+      .limit(30),
+    viewerId
+      ? db
+          .select({ id: reports.id })
+          .from(reports)
+          .where(and(eq(reports.binId, id), eq(reports.userId, viewerId)))
+          .limit(1)
+      : Promise.resolve([]),
+  ]);
 
-  return { ...mapBin(binRows[0]), reports: repRows.map(({ report }) => mapReport(report)) };
+  return {
+    ...mapBin(binRows[0]),
+    reports: repRows.map(({ report }) => mapReport(report)),
+    hasSighted: mineRows.length > 0,
+  };
 }
 
 /** A member flags the bin as missing/wrong → enters the disputed state. */
@@ -387,19 +403,25 @@ export async function setBinStatus(binId: string, status: BinStatus): Promise<Bi
   return updated[0] ? mapBin(updated[0]) : null;
 }
 
-/** Admin: create a named bin directly from the map. */
-export async function createBinByAdmin(input: {
-  name: string;
-  category: string;
-  lat: number;
-  lng: number;
-  status?: BinStatus;
-}): Promise<BinDto | null> {
+/**
+ * Admin: create a named bin directly from the map. Placement is deliberately
+ * unrestricted — the admin can pin a real bin anywhere, not only inside the
+ * drawn campus outline. An optional photo is stored as the admin's first
+ * sighting so the bin card shows it immediately.
+ */
+export async function createBinByAdmin(
+  user: { id: string; email: string },
+  input: {
+    name: string;
+    category: string;
+    lat: number;
+    lng: number;
+    status?: BinStatus;
+    photoBase64?: string;
+  },
+): Promise<BinDto | null> {
   if (!(await isReportableCategory(input.category))) return null;
-  const polygons = await getCampusPolygons();
-  if (!isInsideCampus(input.lat, input.lng, polygons)) {
-    throw new Response('A bin must be placed inside the campus boundary', { status: 422 });
-  }
+
   const inserted = await db
     .insert(bins)
     .values({
@@ -410,7 +432,29 @@ export async function createBinByAdmin(input: {
       status: input.status ?? 'verified',
     })
     .returning(sqlBins);
-  return inserted[0] ? mapBin(inserted[0]) : null;
+
+  if (!inserted[0]) return null;
+
+  if (input.photoBase64) {
+    const photoPath = await storePhoto(input.photoBase64);
+    await db.insert(reports).values({
+      binId: inserted[0].id,
+      userId: user.id,
+      userEmail: user.email,
+      lat: input.lat,
+      lng: input.lng,
+      note: 'Added by a moderator',
+      photoPath,
+    });
+    const [updated] = await db
+      .update(bins)
+      .set({ reportCount: sql`${bins.reportCount} + 1`, updatedAt: new Date() })
+      .where(eq(bins.id, inserted[0].id))
+      .returning(sqlBins);
+    return updated ? mapBin(updated) : mapBin(inserted[0]);
+  }
+
+  return mapBin(inserted[0]);
 }
 
 /** Admin: rename, retype or move an existing bin. */
@@ -425,13 +469,6 @@ export async function updateBinDetails(
   },
 ): Promise<BinDto | null> {
   if (input.category && !(await isReportableCategory(input.category))) return null;
-
-  if (input.lat != null && input.lng != null) {
-    const polygons = await getCampusPolygons();
-    if (!isInsideCampus(input.lat, input.lng, polygons)) {
-      throw new Response('A bin must be placed inside the campus boundary', { status: 422 });
-    }
-  }
 
   const patch: {
     name?: string | null;
@@ -465,27 +502,239 @@ export async function deleteReport(reportId: string): Promise<boolean> {
   return true;
 }
 
-/**
- * Trust score (v1): contributions to the map.
- * 100 → trusted expert; 15 per distinct bin + 3 per report, capped at 100.
- */
-export async function getUserStats(userId: string): Promise<{
+type ContributionEntry = {
+  userId: string;
+  name: string;
+  leaderboardOptIn: boolean;
   reportsCount: number;
   binsContributed: number;
-  trustScore: number;
-}> {
-  const [agg] = await db
+  newBins: number;
+  confirmations: number;
+  photos: number;
+  points: number;
+  rank: number;
+};
+
+type ContributionSourceRow = {
+  id: string;
+  binId: string;
+  userId: string;
+  photoPath: string | null;
+  createdAt: Date;
+  name: string;
+  leaderboardOptIn: boolean;
+};
+
+function isEarlier(a: ContributionSourceRow, b: ContributionSourceRow): boolean {
+  const delta = a.createdAt.getTime() - b.createdAt.getTime();
+  return delta < 0 || (delta === 0 && a.id < b.id);
+}
+
+/**
+ * Points are derived from immutable report history rather than stored, so a
+ * corrected/deleted report can never leave a stale score behind. Campus scale
+ * keeps the scan small; `excludeReportId` produces the "before this action"
+ * snapshot used to detect a rank climb.
+ */
+async function computeLeaderboard(excludeReportId?: string): Promise<ContributionEntry[]> {
+  const rows = await db
     .select({
-      reportsCount: sql<number>`count(*)`,
-      binsContributed: sql<number>`count(distinct ${reports.binId})`,
+      id: reports.id,
+      binId: reports.binId,
+      userId: reports.userId,
+      photoPath: reports.photoPath,
+      createdAt: reports.createdAt,
+      name: user.name,
+      leaderboardOptIn: user.leaderboardOptIn,
     })
     .from(reports)
-    .where(eq(reports.userId, userId));
+    .innerJoin(user, eq(reports.userId, user.id))
+    .where(excludeReportId ? ne(reports.id, excludeReportId) : undefined);
 
-  const reportsCount = Number(agg?.reportsCount ?? 0);
-  const binsContributed = Number(agg?.binsContributed ?? 0);
-  const trustScore = Math.min(100, 15 * binsContributed + 3 * reportsCount);
-  return { reportsCount, binsContributed, trustScore };
+  // The earliest report on a bin is the one that put it on the map.
+  const firstByBin = new Map<string, { id: string; row: ContributionSourceRow }>();
+  for (const row of rows) {
+    const current = firstByBin.get(row.binId);
+    if (!current || isEarlier(row, current.row)) firstByBin.set(row.binId, { id: row.id, row });
+  }
+
+  const totals = new Map<
+    string,
+    {
+      name: string;
+      leaderboardOptIn: boolean;
+      reportsCount: number;
+      bins: Set<string>;
+      newBins: number;
+      photos: number;
+    }
+  >();
+
+  for (const row of rows) {
+    const agg =
+      totals.get(row.userId) ??
+      {
+        name: row.name,
+        leaderboardOptIn: row.leaderboardOptIn,
+        reportsCount: 0,
+        bins: new Set<string>(),
+        newBins: 0,
+        photos: 0,
+      };
+    agg.reportsCount += 1;
+    agg.bins.add(row.binId);
+    if (firstByBin.get(row.binId)?.id === row.id) agg.newBins += 1;
+    if (row.photoPath) agg.photos += 1;
+    totals.set(row.userId, agg);
+  }
+
+  const entries: Omit<ContributionEntry, 'rank'>[] = [];
+  for (const [userId, agg] of totals) {
+    const confirmations = Math.max(0, agg.reportsCount - agg.newBins);
+    entries.push({
+      userId,
+      name: agg.name,
+      leaderboardOptIn: agg.leaderboardOptIn,
+      reportsCount: agg.reportsCount,
+      binsContributed: agg.bins.size,
+      newBins: agg.newBins,
+      confirmations,
+      photos: agg.photos,
+      points:
+        agg.newBins * POINT_RULES.newBin +
+        confirmations * POINT_RULES.confirmation +
+        agg.photos * POINT_RULES.photo,
+    });
+  }
+
+  entries.sort(
+    (a, b) =>
+      b.points - a.points ||
+      b.binsContributed - a.binsContributed ||
+      b.reportsCount - a.reportsCount ||
+      a.name.localeCompare(b.name) ||
+      a.userId.localeCompare(b.userId),
+  );
+
+  return entries.map((entry, index) => ({ ...entry, rank: index + 1 }));
+}
+
+/**
+ * Shared board: only members who explicitly agreed to appear are listed. The
+ * current member is appended when they sit outside the top five.
+ */
+function leaderboardRows(entries: ContributionEntry[], userId: string) {
+  const shared = entries.filter((entry) => entry.leaderboardOptIn);
+  const rows = shared.slice(0, 5).map((entry, index) => ({
+    name: entry.name,
+    points: entry.points,
+    rank: index + 1,
+    isYou: entry.userId === userId,
+  }));
+  const mineIndex = shared.findIndex((entry) => entry.userId === userId);
+  if (mineIndex >= 5) {
+    const mine = shared[mineIndex];
+    rows.push({ name: mine.name, points: mine.points, rank: mineIndex + 1, isYou: true });
+  }
+  return rows;
+}
+
+/** Read just the leaderboard consent flag (works before the first sighting). */
+export async function getLeaderboardOptIn(userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ leaderboardOptIn: user.leaderboardOptIn })
+    .from(user)
+    .where(eq(user.id, userId))
+    .limit(1);
+  return row?.leaderboardOptIn ?? false;
+}
+
+/** Public top 10: names and points of members who agreed to share them. */
+export async function getPublicLeaderboard(
+  limit = 10,
+  viewerId?: string,
+): Promise<PublicLeaderboard> {
+  const shared = (await computeLeaderboard()).filter((entry) => entry.leaderboardOptIn);
+  return {
+    rows: shared.slice(0, limit).map((entry, index) => ({
+      name: entry.name,
+      points: entry.points,
+      rank: index + 1,
+      isYou: Boolean(viewerId && entry.userId === viewerId),
+    })),
+    total: shared.length,
+  };
+}
+
+/**
+ * Contribution stats for a member: points, leaderboard position and exactly
+ * how many points it takes to overtake the person above them.
+ */
+export async function getUserStats(userId: string): Promise<ContributionStats> {
+  const [allEntries, leaderboardOptIn] = await Promise.all([
+    computeLeaderboard(),
+    getLeaderboardOptIn(userId),
+  ]);
+  // Rank and the board are both scoped to members who agreed to be public.
+  const entries = allEntries
+    .filter((entry) => entry.leaderboardOptIn)
+    .map((entry, idx) => ({ ...entry, rank: idx + 1 }));
+  const mineAll = allEntries.find((entry) => entry.userId === userId) ?? null;
+  const index = entries.findIndex((entry) => entry.userId === userId);
+  const mine = index >= 0 ? entries[index] : null;
+  const above = index > 0 ? entries[index - 1] : null;
+  const last = entries.at(-1) ?? null;
+
+  const pointsToNextRank =
+    mine && mine.rank === 1
+      ? null
+      : mine
+        ? Math.max(1, (above?.points ?? 0) - mine.points + 1)
+        : last
+          ? last.points + 1
+          : POINT_RULES.newBin;
+
+  return {
+    reportsCount: mineAll?.reportsCount ?? 0,
+    binsContributed: mineAll?.binsContributed ?? 0,
+    points: mineAll?.points ?? 0,
+    rank: mine?.rank ?? null,
+    totalContributors: entries.length,
+    leaderboardOptIn,
+    pointsToNextRank,
+    breakdown: {
+      newBins: mineAll?.newBins ?? 0,
+      confirmations: mineAll?.confirmations ?? 0,
+      photos: mineAll?.photos ?? 0,
+    },
+    leaderboard: leaderboardRows(entries, userId),
+  };
+}
+
+/** Push a one-off encouragement when a contribution lifts the member's rank. */
+async function notifyLeaderboardClimb(userId: string, reportId: string): Promise<void> {
+  const [current, previous] = await Promise.all([
+    computeLeaderboard(),
+    computeLeaderboard(reportId),
+  ]);
+  const shared = current
+    .filter((entry) => entry.leaderboardOptIn)
+    .map((entry, idx) => ({ ...entry, rank: idx + 1 }));
+  const now = shared.find((entry) => entry.userId === userId);
+  // Members who have not agreed to be public are not ranked, so no climb.
+  if (!now) return;
+
+  const before = previous
+    .filter((entry) => entry.leaderboardOptIn)
+    .map((entry, idx) => ({ ...entry, rank: idx + 1 }))
+    .find((entry) => entry.userId === userId);
+  if (before && now.rank >= before.rank) return;
+
+  await sendToUsers([userId], {
+    title: 'You moved up the leaderboard 🎉',
+    body: `You're now #${now.rank} of ${shared.length} shared ranks with ${now.points} points.`,
+    data: { open: 'stats' },
+  });
 }
 
 export async function listMyReports(userId: string): Promise<ReportDto[]> {

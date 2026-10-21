@@ -3,6 +3,8 @@ import { router, usePathname } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { LeaderboardCard } from '@/components/LeaderboardCard';
+import { BrandMark } from '@/components/ui/BrandMark';
 import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/ui/Drawer';
 import { SocialLinks } from '@/components/ui/SocialLinks';
@@ -31,11 +33,11 @@ function drawerItems(isAdmin: boolean): DrawerItem[] {
       hint: 'Updates on your reports',
     },
     {
-      key: 'profile',
-      label: 'Profile & impact',
-      icon: 'person-outline',
-      href: '/profile',
-      hint: 'Trust score and history',
+      key: 'stats',
+      label: 'Stats & leaderboard',
+      icon: 'stats-chart-outline',
+      href: '/stats',
+      hint: 'Points, rank and history',
     },
     ...(isAdmin
       ? [
@@ -81,6 +83,10 @@ export default function Sidebar({
 
   function go(href: string) {
     onClose();
+    if (!signedIn && href !== '/') {
+      router.push('/sign-in');
+      return;
+    }
     router.navigate(href as never);
   }
 
@@ -105,9 +111,7 @@ export default function Sidebar({
       <View style={styles.panel}>
         <View style={styles.header}>
           <Pressable onPress={() => go('/')} style={styles.brand} accessibilityRole="link">
-            <View style={styles.brandMark}>
-              <Ionicons name="leaf" size={20} color="#FFFFFF" />
-            </View>
+            <BrandMark size={40} />
             <View>
               <Text style={styles.brandName}>EMU Bin Tracker</Text>
               <Text style={styles.brandSub}>Sustainability map</Text>
@@ -130,11 +134,11 @@ export default function Sidebar({
           keyboardShouldPersistTaps="handled"
         >
           <Button
-            title="Report a bin"
+            title="Add a bin"
             icon="add"
             onPress={() => {
               onClose();
-              router.push('/report/new');
+              router.push(signedIn ? '/report/new' : '/sign-in');
             }}
           />
 
@@ -173,6 +177,8 @@ export default function Sidebar({
             })}
           </View>
 
+          <LeaderboardCard />
+
           <View style={styles.social}>
             <SocialLinks label="Community" />
           </View>
@@ -182,7 +188,7 @@ export default function Sidebar({
           {signedIn ? (
             <>
               <Pressable
-                onPress={() => go('/profile')}
+                onPress={() => go('/stats')}
                 style={({ pressed }) => [styles.account, pressed && { opacity: 0.8 }]}
                 accessibilityRole="link"
               >

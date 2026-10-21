@@ -12,7 +12,7 @@ import { reportSchema } from '@/lib/validation';
  */
 export async function POST(request: Request) {
   const user = await getSessionUser(request);
-  if (!user) throw new Response('Sign in to report bins', { status: 401 });
+  if (!user) throw new Response('Sign in to add bins', { status: 401 });
 
   const parsed = reportSchema.safeParse(await request.json());
   if (!parsed.success) {

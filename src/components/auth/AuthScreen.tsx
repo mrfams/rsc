@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { BrandMark } from '@/components/ui/BrandMark';
 import { Button } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Field';
 import { Segmented } from '@/components/ui/Segmented';
@@ -111,9 +112,7 @@ export function AuthScreen({ initialMode = 'signin' }: { initialMode?: Mode }) {
   const form = (
     <View style={[styles.formCard, desktop && styles.formCardDesktop]}>
       <View style={styles.mobileBrand}>
-        <View style={styles.brandMark}>
-          <Ionicons name="leaf" size={20} color="#FFFFFF" />
-        </View>
+        <BrandMark size={40} />
         <View>
           <Text style={styles.brandName}>EMU Bin Tracker</Text>
           <Text style={styles.brandSub}>Find a bin. Add a bin. Keep campus clean.</Text>
@@ -127,7 +126,7 @@ export function AuthScreen({ initialMode = 'signin' }: { initialMode?: Mode }) {
           </Text>
           <Text style={styles.subtitle}>
             {mode === 'signin'
-              ? 'Sign in to report bins, verify sightings and track impact.'
+              ? 'Sign in to add bins, verify sightings and track impact.'
               : 'Anyone can join — no campus email required.'}
           </Text>
         </View>
@@ -220,8 +219,8 @@ export function AuthScreen({ initialMode = 'signin' }: { initialMode?: Mode }) {
         />
 
         <Text style={styles.terms}>
-          By continuing you agree to keep sightings truthful and respectful. Reports are public on
-          the campus map.
+          By continuing you agree to keep sightings truthful and respectful. Sightings are public
+          on the campus map.
         </Text>
       </View>
 
@@ -238,9 +237,7 @@ export function AuthScreen({ initialMode = 'signin' }: { initialMode?: Mode }) {
           <View style={[styles.blob, { width: 420, height: 420, top: -120, right: -140 }]} />
           <View style={[styles.blob, { width: 260, height: 260, bottom: -80, left: -80 }]} />
           <View style={styles.heroTop}>
-            <View style={styles.heroBrandMark}>
-              <Ionicons name="leaf" size={22} color={COLORS.primary} />
-            </View>
+            <BrandMark size={44} />
             <Text style={styles.heroBrand}>EMU Bin Tracker</Text>
           </View>
 
@@ -248,14 +245,14 @@ export function AuthScreen({ initialMode = 'signin' }: { initialMode?: Mode }) {
             <Text style={styles.heroEyebrow}>SUSTAINABILITY, MAPPED</Text>
             <Text style={styles.heroTitle}>Every bin on campus.{'\n'}One living map.</Text>
             <Text style={styles.heroCopy}>
-              Report a bin in seconds, confirm what others find, and help the whole campus waste
-              less. Built for phones and desktops alike.
+              Add a bin in seconds, confirm what others find, and help the whole campus waste less.
+              Built for phones and desktops alike.
             </Text>
 
             <View style={styles.features}>
               <Feature icon="location-outline" title="Pin it where it is" text="Tap the map, no coordinates needed." />
               <Feature icon="people-outline" title="Verified by the community" text="Two independent sightings make a bin trusted." />
-              <Feature icon="cloud-offline-outline" title="Works offline" text="Report now, sync automatically when you reconnect." />
+              <Feature icon="cloud-offline-outline" title="Works offline" text="Add now, sync automatically when you reconnect." />
             </View>
           </View>
 

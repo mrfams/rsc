@@ -1,9 +1,8 @@
 /**
  * Native map: MapLibre React Native (vector, keyless).
  *
- * Markers are real recycling pins drawn with React Native views. Campus labels
- * are rendered as lightweight, non-interactive markers so building names stay
- * visible regardless of the basemap's label density.
+ * Markers are real recycling pins drawn with React Native views. The basemap
+ * style already carries place and building labels, so the map adds bins only.
  */
 import {
   Camera,
@@ -15,13 +14,13 @@ import {
 } from '@maplibre/maplibre-react-native';
 import type { StyleSpecification } from '@maplibre/maplibre-react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { Feature, MultiPolygon, Polygon, Position } from 'geojson';
-import { CAMPUS_CENTER, CAMPUS_PLACES, DEFAULT_MAP_ZOOM } from '@/lib/constants';
+import { CAMPUS_CENTER, DEFAULT_MAP_ZOOM } from '@/lib/constants';
 import { SHADOW } from '@/lib/theme';
-import type { MapLabel, MapMarker, MapPolygon, MapViewProps } from './types';
+import type { MapMarker, MapPolygon, MapViewProps } from './types';
 
 export type { MapViewProps };
 
@@ -53,14 +52,6 @@ const SATELLITE_STYLE: StyleSpecification = {
     { id: 'esri-places', type: 'raster', source: 'places' },
   ],
 };
-
-const DEFAULT_LABELS: MapLabel[] = CAMPUS_PLACES.map((place) => ({
-  id: place.name,
-  name: place.short,
-  latitude: place.latitude,
-  longitude: place.longitude,
-  priority: place.priority,
-}));
 
 function ringToGeoJSON(polygon: MapPolygon): Position[] {
   return polygon.map((p): Position => [p.longitude, p.latitude]);
@@ -127,11 +118,9 @@ export default function MapView({
   polygon,
   polygons,
   maskOutside = false,
-  labels = DEFAULT_LABELS,
   fitToPolygon = false,
   style,
 }: MapViewProps) {
-  const [currentZoom, setCurrentZoom] = useState(zoom);
   const mapStyle = basemap === 'satellite' ? SATELLITE_STYLE : STREET_STYLE_URL;
 
   const rings: MapPolygon[] = useMemo(() => {
@@ -180,11 +169,6 @@ export default function MapView({
     [markers],
   );
 
-  const visibleLabels = useMemo(
-    () => labels.filter((label) => currentZoom >= 15.5 || (label.priority ?? 1) === 1),
-    [labels, currentZoom],
-  );
-
   return (
     <Map
       style={[styles.container, style]}
@@ -193,7 +177,6 @@ export default function MapView({
         const [lng, lat] = event.nativeEvent.lngLat;
         onPressMap?.(lat, lng);
       }}
-      onRegionDidChange={(event) => setCurrentZoom(event.nativeEvent.zoom)}
     >
       <Camera
         key={`${viewCenter.longitude.toFixed(5)},${viewCenter.latitude.toFixed(5)},${zoom},${fitToPolygon ? rings.length : 0}`}
@@ -224,19 +207,6 @@ export default function MapView({
           />
         </GeoJSONSource>
       ) : null}
-
-      {visibleLabels.map((label) => (
-        <Marker
-          key={`label-${label.id}`}
-          id={`label-${label.id}`}
-          lngLat={[label.longitude, label.latitude]}
-          anchor="center"
-        >
-          <View pointerEvents="none" style={styles.labelWrap}>
-            <Text style={styles.labelText}>{label.name}</Text>
-          </View>
-        </Marker>
-      ))}
 
       {ordered.map((marker) => (
         <Marker
@@ -291,14 +261,4 @@ const styles = StyleSheet.create({
   },
   numberPinSelected: { transform: [{ scale: 1.22 }] },
   numberText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
-  labelWrap: {
-    backgroundColor: 'rgba(255,255,255,0.9)',
-    borderRadius: 7,
-    borderWidth: 1,
-    borderColor: 'rgba(16,20,19,0.08)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    ...SHADOW.sm,
-  },
-  labelText: { fontSize: 10.5, fontWeight: '600', color: '#18211E' },
 });

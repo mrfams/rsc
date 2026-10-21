@@ -1,11 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -20,12 +23,14 @@ import { StatusPill } from '@/components/ui/StatusPill';
 import { api } from '@/lib/api-client';
 import { useSession } from '@/lib/auth-client';
 import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
+import { displayNote } from '@/lib/notes';
 import { RADIUS, timeAgo } from '@/lib/theme';
 import { useMe } from '@/lib/use-me';
 import { BIN_STATUS_LABEL, binStatusEnum, categoryEmoji, type BinStatus } from '@/lib/validation';
 
 type Report = {
   id: string;
+  userId: string;
   note: string | null;
   photoUrl: string | null;
   createdAt: string;
@@ -46,6 +51,8 @@ type BinDetail = {
   createdAt: string;
   updatedAt: string;
   reports: Report[];
+  /** Server-computed for the signed-in viewer, not limited to recent history. */
+  hasSighted?: boolean;
 };
 
 type Config = {
@@ -118,7 +125,6 @@ export function BinDetails({
           lat: bin?.lat,
           lng: bin?.lng,
           category: bin?.category,
-          note: 'Seen in place',
         },
       }),
     onSuccess: () => {
@@ -135,6 +141,43 @@ export function BinDetails({
       const status = (err as { status?: number }).status;
       if (status === 401) {
         setNotice({ tone: 'info', text: 'Sign in to confirm this bin.' });
+        router.push('/sign-in');
+        return;
+      }
+      setNotice({ tone: 'error', text: err.message });
+    },
+  });
+
+  /*
+   * Add a photo to an *existing* bin: it is stored as an extra sighting on
+   * this exact bin (the server links by proximity), and the card then shows
+   * it as the community photo.
+   */
+  const addPhoto = useMutation({
+    mutationFn: (photoBase64: string) =>
+      api('/api/reports', {
+        method: 'POST',
+        json: {
+          lat: bin?.lat,
+          lng: bin?.lng,
+          category: bin?.category,
+          note: 'Added a photo of this bin',
+          photoBase64,
+        },
+      }),
+    onSuccess: () => {
+      invalidate();
+      showDialog({
+        tone: 'success',
+        title: 'Photo added',
+        message: 'Thanks — everyone scanning the map will recognise this bin now.',
+        confirmLabel: 'Done',
+      });
+    },
+    onError: (err) => {
+      const status = (err as { status?: number }).status;
+      if (status === 401) {
+        setNotice({ tone: 'info', text: 'Sign in to add a photo.' });
         router.push('/sign-in');
         return;
       }
@@ -197,11 +240,15 @@ export function BinDetails({
     } as const);
   const color = category.color ?? COLORS.primary;
   const latestPhoto = bin.reports.find((r) => r.photoUrl)?.photoUrl ?? null;
-  const latestNote = bin.reports.find((r) => r.note?.trim())?.note ?? null;
+  const latestNote = bin.reports.map((r) => displayNote(r.note)).find((note) => note !== null) ?? null;
   const isAdmin = me?.isAdmin === true;
   const signedIn = Boolean(session?.user);
   const removed = bin.status === 'removed';
+  const alreadySighted = bin.hasSighted === true;
   const displayName = bin.name?.trim() || `${category.name} bin`;
+  // A member confirms once. A later "gone" flag makes confirmation useful again.
+  const needsSighting = !bin.hasSighted || bin.status === 'disputed';
+  const sightingLabel = bin.status === 'disputed' ? 'Report this bin' : 'I see it too';
 
   function directions() {
     const url = `https://www.google.com/maps/dir/?api=1&destination=${bin?.lat},${bin?.lng}`;
@@ -233,6 +280,58 @@ export function BinDetails({
       return;
     }
     sighting.mutate();
+  }
+
+  async function addPhotoFrom(source: 'camera' | 'library') {
+    if (!signedIn) {
+      setNotice({ tone: 'info', text: 'Sign in to add a photo.' });
+      router.push('/sign-in');
+      return;
+    }
+    if (addPhoto.isPending) return;
+    setNotice(null);
+    try {
+      if (source === 'camera' && Platform.OS !== 'web') {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          setNotice({
+            tone: 'error',
+            text: 'Camera access is off. Allow it in settings, or choose a photo instead.',
+          });
+          return;
+        }
+      }
+
+      const options: ImagePicker.ImagePickerOptions = {
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        quality: 0.8,
+        base64: true,
+        exif: false,
+      };
+      const result =
+        source === 'camera' && Platform.OS !== 'web'
+          ? await ImagePicker.launchCameraAsync(options)
+          : await ImagePicker.launchImageLibraryAsync(options);
+      if (result.canceled || !result.assets[0]?.uri) return;
+
+      // Same pipeline as the report form: 1280px JPEG under the 450 KB cap.
+      const context = ImageManipulator.manipulate(result.assets[0].uri).resize({ width: 1280 });
+      const image = await context.renderAsync();
+      const saved = await image.saveAsync({
+        compress: 0.7,
+        format: SaveFormat.JPEG,
+        base64: true,
+      });
+      const base64 = saved.base64 ? `data:image/jpeg;base64,${saved.base64}` : null;
+      if (!base64) {
+        setNotice({ tone: 'error', text: 'Could not process that photo. Try another one.' });
+        return;
+      }
+      addPhoto.mutate(base64);
+    } catch {
+      setNotice({ tone: 'error', text: 'Could not process that photo. Try another one.' });
+    }
   }
 
   return (
@@ -274,6 +373,22 @@ export function BinDetails({
               <Ionicons name="camera-outline" size={12} color="#FFFFFF" />
               <Text style={styles.photoBadgeText}>Community photo</Text>
             </View>
+            <Pressable
+              onPress={() => void addPhotoFrom('camera')}
+              disabled={addPhoto.isPending}
+              accessibilityRole="button"
+              accessibilityLabel="Add another photo of this bin"
+              style={({ pressed }) => [
+                styles.photoAdd,
+                addPhoto.isPending && { opacity: 0.6 },
+                pressed && { opacity: 0.75 },
+              ]}
+            >
+              <Ionicons name="camera" size={14} color="#FFFFFF" />
+              <Text style={styles.photoAddText}>
+                {addPhoto.isPending ? 'Saving…' : 'Add photo'}
+              </Text>
+            </Pressable>
           </View>
         ) : (
           <View style={[styles.photoEmpty, { backgroundColor: `${color}10` }]}>
@@ -281,8 +396,38 @@ export function BinDetails({
             <View style={{ flex: 1 }}>
               <Text style={styles.photoEmptyTitle}>{category.name} bin</Text>
               <Text style={styles.photoEmptyText}>
-                No photo yet. Add one with your next sighting and help everyone recognise it.
+                No photo yet. Add one now and help everyone recognise this bin.
               </Text>
+              <View style={styles.photoEmptyActions}>
+                <Pressable
+                  onPress={() => void addPhotoFrom('camera')}
+                  disabled={addPhoto.isPending}
+                  accessibilityRole="button"
+                  style={({ pressed }) => [
+                    styles.photoEmptyBtn,
+                    addPhoto.isPending && { opacity: 0.6 },
+                    pressed && { opacity: 0.75 },
+                  ]}
+                >
+                  <Ionicons name="camera-outline" size={15} color={COLORS.primary} />
+                  <Text style={styles.photoEmptyBtnText}>
+                    {addPhoto.isPending ? 'Saving…' : 'Camera'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => void addPhotoFrom('library')}
+                  disabled={addPhoto.isPending}
+                  accessibilityRole="button"
+                  style={({ pressed }) => [
+                    styles.photoEmptyBtn,
+                    addPhoto.isPending && { opacity: 0.6 },
+                    pressed && { opacity: 0.75 },
+                  ]}
+                >
+                  <Ionicons name="images-outline" size={15} color={COLORS.primary} />
+                  <Text style={styles.photoEmptyBtnText}>Photos</Text>
+                </Pressable>
+              </View>
             </View>
           </View>
         )}
@@ -296,14 +441,7 @@ export function BinDetails({
                 {bin.area}
               </Text>
             </View>
-          ) : (
-            <View style={styles.areaPill}>
-              <Ionicons name="pin-outline" size={12} color={COLORS.textMuted} />
-              <Text style={styles.areaText}>
-                {bin.lat.toFixed(5)}, {bin.lng.toFixed(5)}
-              </Text>
-            </View>
-          )}
+          ) : null}
         </View>
 
         {notice ? (
@@ -326,19 +464,37 @@ export function BinDetails({
             onPress={directions}
             style={{ flex: 1 }}
           />
-          {!removed ? (
+          {!removed && needsSighting ? (
             <Button
-              title={sighting.isPending ? 'Saving…' : 'I see it too'}
-              icon="eye-outline"
+              title={sighting.isPending ? 'Saving…' : sightingLabel}
+              icon={bin.status === 'disputed' ? 'refresh-outline' : 'eye-outline'}
               variant="secondary"
               loading={sighting.isPending}
               onPress={addSighting}
               style={{ flex: 1 }}
             />
+          ) : !removed ? (
+            <Button
+              title="This bin is gone"
+              icon="flag-outline"
+              variant="danger"
+              onPress={askMissing}
+              style={{ flex: 1 }}
+            />
           ) : null}
         </View>
 
-        {!removed ? (
+        {alreadySighted && !needsSighting ? (
+          <View style={styles.sightedNote}>
+            <Ionicons name="checkmark-circle" size={15} color={COLORS.success} />
+            <Text style={styles.sightedNoteText}>
+              You already confirmed this bin — thanks. We won’t ask you again unless it gets
+              flagged.
+            </Text>
+          </View>
+        ) : null}
+
+        {!removed && needsSighting ? (
           <Pressable
             onPress={askMissing}
             accessibilityRole="button"
@@ -405,7 +561,7 @@ export function BinDetails({
               )}
               <View style={{ flex: 1, gap: 3 }}>
                 <Text style={styles.reportNote} numberOfLines={2}>
-                  {report.note?.trim() || 'Sighting confirmed'}
+                  {displayNote(report.note) ?? 'Sighting confirmed'}
                 </Text>
                 <Text style={styles.reportMeta}>
                   {isAdmin ? report.userEmail : 'Community member'} · {timeAgo(report.createdAt)}
@@ -528,6 +684,19 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(16,20,19,0.62)',
   },
   photoBadgeText: { fontSize: 10.5, fontWeight: '700', color: '#FFFFFF' },
+  photoAdd: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(16,20,19,0.66)',
+  },
+  photoAddText: { fontSize: 11, fontWeight: '700', color: '#FFFFFF' },
   photoEmpty: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -539,6 +708,19 @@ const styles = StyleSheet.create({
   photoEmoji: { fontSize: 40 },
   photoEmptyTitle: { fontSize: 15, fontWeight: '800', color: COLORS.text },
   photoEmptyText: { fontSize: 12, lineHeight: 17, color: COLORS.textMuted, marginTop: 2 },
+  photoEmptyActions: { flexDirection: 'row', gap: 8, marginTop: 9 },
+  photoEmptyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+  },
+  photoEmptyBtnText: { fontSize: 12, fontWeight: '700', color: COLORS.primary },
   chipRow: { flexDirection: 'row', gap: 7, flexWrap: 'wrap', alignItems: 'center' },
   areaPill: {
     flexDirection: 'row',
@@ -561,6 +743,16 @@ const styles = StyleSheet.create({
   },
   quoteText: { flex: 1, fontSize: 12.5, lineHeight: 18, color: COLORS.text, fontStyle: 'italic' },
   actions: { flexDirection: 'row', gap: 9 },
+  sightedNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+    backgroundColor: COLORS.successSoft,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+  },
+  sightedNoteText: { flex: 1, fontSize: 11.5, lineHeight: 16, color: COLORS.text },
   missingLink: {
     flexDirection: 'row',
     alignItems: 'center',

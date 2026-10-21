@@ -6,9 +6,9 @@
  * campus and the medical/health campus to the west. The three rings are kept
  * intact so reports, the geofence editor and the map shading all agree.
  *
- * Building/place labels below are curated from OpenStreetMap (ODbL) and are
- * rendered directly on the map so names stay readable even when the basemap
- * tiles are low-detail or satellite imagery.
+ * The named places below are curated from OpenStreetMap (ODbL) and are used to
+ * suggest a name for a new bin. The basemap already draws place labels, so the
+ * app itself only adds bin pins to the map.
  */
 
 export const LIGHT = {
@@ -206,16 +206,17 @@ export type CampusPlaceKind =
 
 export type CampusPlace = CampusPoint & {
   name: string;
-  /** Short label used on the map at lower zoom. */
+  /** Short display name kept for compact UI and future suggestions. */
   short: string;
   kind: CampusPlaceKind;
-  /** 1 = always visible; 2 = visible from zoom 16. */
+  /** 1 = major landmark; 2 = secondary building. */
   priority: 1 | 2;
 };
 
 /**
  * Named places on and around campus (OSM, ODbL). Coordinates are centroids of
- * the OSM building footprints. Used for map labels and to auto-name new bins.
+ * the OSM building footprints. Used to suggest a name for a new bin; place
+ * labels themselves come from the map basemap.
  */
 export const CAMPUS_PLACES: CampusPlace[] = [
   { name: 'Özay Oral Library', short: 'Library', latitude: 35.1414223, longitude: 33.9118816, kind: 'library', priority: 1 },
@@ -270,14 +271,17 @@ export const CAMPUS_PLACES: CampusPlace[] = [
 ];
 
 /**
- * Public contact links. Override with EXPO_PUBLIC_INSTAGRAM_URL /
- * EXPO_PUBLIC_WHATSAPP_URL in .env; the defaults point at EMU Sustainability
- * and the university support WhatsApp line.
+ * Public contact links. Every Instagram/WhatsApp chip reads from here. Override
+ * with EXPO_PUBLIC_INSTAGRAM_URL / EXPO_PUBLIC_WHATSAPP_URL in .env; the
+ * defaults point at the RSC EMU Instagram club and its WhatsApp group invite.
  */
 export const SOCIAL_LINKS = {
   instagram:
-    process.env.EXPO_PUBLIC_INSTAGRAM_URL ?? 'https://www.instagram.com/emu.sustainability/',
-  whatsapp: process.env.EXPO_PUBLIC_WHATSAPP_URL ?? 'https://wa.me/905391060335',
+    process.env.EXPO_PUBLIC_INSTAGRAM_URL ?? 'https://www.instagram.com/rsemu_club/',
+  whatsapp:
+    process.env.EXPO_PUBLIC_WHATSAPP_URL ??
+    // Direct group invite — not the l.instagram.com redirect wrapper.
+    'https://chat.whatsapp.com/HfmvqCAdJ629e6kG2k9x0T?s=cl&p=a&mlu=4&ilr=4',
 };
 
 /** Vertical space reserved for the floating mobile tab bar. */

@@ -2,9 +2,11 @@ import 'dotenv/config';
 import { expo } from '@better-auth/expo';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { eq, inArray, sql } from 'drizzle-orm';
 
 import { db } from './db';
 import * as authSchema from './db/auth-schema';
+import { bins, reports } from './db/schema';
 
 const dev = process.env.NODE_ENV !== 'production';
 
@@ -27,11 +29,48 @@ export function isAdminUser(user: { email: string; role?: string | null } | null
   return user.role === 'admin' || isAdminEmail(user.email);
 }
 
+/* Bin ids touched by an account deletion, used to rebuild their aggregates. */
+const binsForDeletion = new Map<string, string[]>();
+
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
     provider: 'pg',
     schema: authSchema,
   }),
+  user: {
+    deleteUser: {
+      enabled: true,
+      beforeDelete: async (deletedUser) => {
+        const rows = await db
+          .select({ binId: reports.binId })
+          .from(reports)
+          .where(eq(reports.userId, deletedUser.id));
+        binsForDeletion.set(deletedUser.id, [...new Set(rows.map((row) => row.binId))]);
+      },
+      afterDelete: async (deletedUser) => {
+        const affected = binsForDeletion.get(deletedUser.id) ?? [];
+        binsForDeletion.delete(deletedUser.id);
+        if (affected.length === 0) return;
+        try {
+          await db
+            .update(bins)
+            .set({
+              reportCount: sql`(select count(*)::double precision from ${reports} where ${reports.binId} = ${bins.id})`,
+              status: sql`case
+                when ${bins.status} in ('removed', 'disputed') then ${bins.status}
+                when (select count(distinct ${reports.userId}) from ${reports} where ${reports.binId} = ${bins.id}) >= 2 then 'verified'::bin_status
+                else 'pending'::bin_status
+              end`,
+              updatedAt: new Date(),
+            })
+            .where(inArray(bins.id, affected));
+        } catch (error) {
+          // The account is already gone; leave the map usable and log the gap.
+          console.error('Could not rebuild bin aggregates after account deletion', error);
+        }
+      },
+    },
+  },
   emailAndPassword: {
     enabled: true,
     // Default Better Auth password policy applies (min 8 chars).

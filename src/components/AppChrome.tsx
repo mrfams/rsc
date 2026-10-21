@@ -8,10 +8,11 @@
  */
 import { Ionicons } from '@expo/vector-icons';
 import { router, usePathname, type Href } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -19,11 +20,14 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { LeaderboardCard } from '@/components/LeaderboardCard';
 import Sidebar from '@/components/Sidebar';
+import { BrandMark } from '@/components/ui/BrandMark';
 import { Button } from '@/components/ui/Button';
 import { SocialLinks } from '@/components/ui/SocialLinks';
 import { useSession } from '@/lib/auth-client';
 import { COLORS } from '@/lib/constants';
+import { registerPushToken } from '@/lib/register-push';
 import { initials, RADIUS, SHADOW } from '@/lib/theme';
 import { useHydrated } from '@/lib/use-hydrated';
 import { useMe } from '@/lib/use-me';
@@ -44,17 +48,25 @@ type NavItem = {
 };
 
 function navItems(isAdmin: boolean): NavItem[] {
+  if (isAdmin) {
+    return [
+      { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },
+      { key: 'review', href: '/admin/review', label: 'Review', icon: 'time-outline' },
+      { key: 'profile', href: '/stats', label: 'Profile', icon: 'person-circle-outline' },
+      { key: 'admin', href: '/admin', label: 'Admin', icon: 'shield-checkmark-outline' },
+    ];
+  }
   return [
     { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },
     { key: 'alerts', href: '/alerts', label: 'Alerts', icon: 'notifications-outline' },
-    isAdmin
-      ? { key: 'admin', href: '/admin', label: 'Admin', icon: 'shield-checkmark-outline' }
-      : { key: 'profile', href: '/profile', label: 'Profile', icon: 'person-outline' },
+    { key: 'stats', href: '/stats', label: 'Stats', icon: 'stats-chart-outline' },
   ];
 }
 
 function active(pathname: string, item: NavItem): boolean {
   if (item.key === 'map') return pathname === '/' || pathname === '/map';
+  if (item.key === 'review') return pathname === '/admin/review';
+  if (item.key === 'admin') return pathname === '/admin';
   const href = String(item.href);
   return pathname === href || pathname.startsWith(`${href}/`);
 }
@@ -64,6 +76,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const hydrated = useHydrated();
   const pathname = usePathname() ?? '/';
   const desktop = hydrated && Platform.OS === 'web' && width >= WIDE_BREAKPOINT;
+  const { data: session } = useSession();
+
+  /*
+   * Register for push the moment anyone signs in, from any screen — not only
+   * when they happen to open Alerts or Profile. Best-effort and idempotent.
+   */
+  useEffect(() => {
+    if (session?.user) void registerPushToken();
+  }, [session?.user]);
 
   if (isImmersive(pathname)) {
     return <View style={styles.shell}>{children}</View>;
@@ -93,6 +114,7 @@ export function DesktopSidebar() {
   const { data: session } = useSession();
   const { data: me } = useMe();
   const isAdmin = me?.isAdmin === true;
+  const signedIn = Boolean(session?.user);
   const items = navItems(isAdmin);
   const name = me?.user.name ?? session?.user?.name ?? '';
   const email = me?.user.email ?? session?.user?.email ?? '';
@@ -105,9 +127,7 @@ export function DesktopSidebar() {
         accessibilityRole="link"
         accessibilityLabel="EMU Bin Tracker home"
       >
-        <View style={styles.brandMark}>
-          <Ionicons name="leaf" size={21} color="#FFFFFF" />
-        </View>
+        <BrandMark size={40} />
         <View style={{ flex: 1 }}>
           <Text style={styles.brandName}>EMU Bin Tracker</Text>
           <Text style={styles.brandSub}>Sustainability map</Text>
@@ -115,47 +135,55 @@ export function DesktopSidebar() {
       </Pressable>
 
       <Button
-        title="Report a bin"
+        title="Add a bin"
         icon="add"
-        onPress={() => router.push('/report/new')}
+        onPress={() => router.push(signedIn ? '/report/new' : '/sign-in')}
         style={styles.railCta}
       />
 
-      <View style={styles.railNav}>
-        <Text style={styles.railSection}>Navigate</Text>
-        {items.map((item) => {
-          const on = active(pathname, item);
-          return (
-            <Pressable
-              key={item.key}
-              onPress={() => router.navigate(item.href)}
-              accessibilityRole="link"
-              style={({ pressed }) => [
-                styles.railItem,
-                on && styles.railItemActive,
-                pressed && { opacity: 0.75 },
-              ]}
-            >
-              <View style={[styles.railIcon, on && styles.railIconActive]}>
-                <Ionicons
-                  name={on ? item.icon.replace('-outline', '') as keyof typeof Ionicons.glyphMap : item.icon}
-                  size={19}
-                  color={on ? COLORS.primary : COLORS.textMuted}
-                />
-              </View>
-              <Text style={[styles.railLabel, on && styles.railLabelActive]}>{item.label}</Text>
-              {on ? <View style={styles.railDot} /> : null}
-            </Pressable>
-          );
-        })}
-      </View>
+      <ScrollView
+        style={styles.railScroll}
+        contentContainerStyle={styles.railScrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.railNav}>
+          <Text style={styles.railSection}>Navigate</Text>
+          {items.map((item) => {
+            const on = active(pathname, item);
+            return (
+              <Pressable
+                key={item.key}
+                onPress={() =>
+                  router.navigate(signedIn || item.key === 'map' ? item.href : '/sign-in')
+                }
+                accessibilityRole="link"
+                style={({ pressed }) => [
+                  styles.railItem,
+                  on && styles.railItemActive,
+                  pressed && { opacity: 0.75 },
+                ]}
+              >
+                <View style={[styles.railIcon, on && styles.railIconActive]}>
+                  <Ionicons
+                    name={on ? item.icon.replace('-outline', '') as keyof typeof Ionicons.glyphMap : item.icon}
+                    size={19}
+                    color={on ? COLORS.primary : COLORS.textMuted}
+                  />
+                </View>
+                <Text style={[styles.railLabel, on && styles.railLabelActive]}>{item.label}</Text>
+                {on ? <View style={styles.railDot} /> : null}
+              </Pressable>
+            );
+          })}
+        </View>
 
-      <View style={{ flex: 1 }} />
+        <LeaderboardCard compact />
+      </ScrollView>
 
       <View style={styles.railFooter}>
         <SocialLinks compact label="Community" />
         <Pressable
-          onPress={() => router.navigate(session?.user ? '/profile' : '/sign-in')}
+          onPress={() => router.navigate(session?.user ? '/stats' : '/sign-in')}
           style={({ pressed }) => [styles.accountCard, pressed && { opacity: 0.8 }]}
           accessibilityRole="link"
         >
@@ -189,25 +217,32 @@ export function BottomNav() {
   const pathname = usePathname() ?? '/';
   const insets = useSafeAreaInsets();
   const { data: me } = useMe();
+  const { data: session } = useSession();
   const isAdmin = me?.isAdmin === true;
+  const signedIn = Boolean(session?.user);
 
-  const left: NavItem[] = [
-    { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },
-    { key: 'alerts', href: '/alerts', label: 'Alerts', icon: 'notifications-outline' },
-  ];
+  const left: NavItem[] = isAdmin
+    ? [
+        { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },
+        { key: 'review', href: '/admin/review', label: 'Review', icon: 'time-outline' },
+      ]
+    : [
+        { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },
+        { key: 'alerts', href: '/alerts', label: 'Alerts', icon: 'notifications-outline' },
+      ];
   const right: NavItem[] = isAdmin
     ? [
-        { key: 'reports', href: '/profile', label: 'Reports', icon: 'document-text-outline' },
+        { key: 'profile', href: '/stats', label: 'Profile', icon: 'person-circle-outline' },
         { key: 'admin', href: '/admin', label: 'Admin', icon: 'shield-checkmark-outline' },
       ]
-    : [{ key: 'profile', href: '/profile', label: 'Profile', icon: 'person-outline' }];
+    : [{ key: 'stats', href: '/stats', label: 'Stats', icon: 'stats-chart-outline' }];
 
   const renderItem = (item: NavItem) => {
-    const on = item.key === 'reports' ? pathname.startsWith('/profile') : active(pathname, item);
+    const on = active(pathname, item);
     return (
       <Pressable
         key={item.key}
-        onPress={() => router.navigate(item.href)}
+        onPress={() => router.navigate(signedIn || item.key === 'map' ? item.href : '/sign-in')}
         accessibilityRole="link"
         accessibilityState={{ selected: on }}
         style={({ pressed }) => [styles.tab, pressed && { opacity: 0.65 }]}
@@ -231,15 +266,15 @@ export function BottomNav() {
       <View style={styles.tabBar}>
         {left.map(renderItem)}
         <Pressable
-          onPress={() => router.push('/report/new')}
+          onPress={() => router.push(signedIn ? '/report/new' : '/sign-in')}
           accessibilityRole="button"
-          accessibilityLabel="Report a bin"
+          accessibilityLabel="Add a bin"
           style={({ pressed }) => [styles.reportTab, pressed && { opacity: 0.85 }]}
         >
           <View style={styles.reportFab}>
             <Ionicons name="add" size={27} color="#FFFFFF" />
           </View>
-          <Text style={styles.reportLabel}>Report</Text>
+          <Text style={styles.reportLabel}>Add</Text>
         </Pressable>
         {right.map(renderItem)}
       </View>
@@ -297,7 +332,9 @@ const styles = StyleSheet.create({
   brandName: { fontSize: 15.5, fontWeight: '800', color: COLORS.text, letterSpacing: -0.3 },
   brandSub: { fontSize: 11.5, color: COLORS.textMuted, marginTop: 1 },
   railCta: { borderRadius: RADIUS.sm },
-  railNav: { gap: 3, marginTop: 6 },
+  railScroll: { flex: 1 },
+  railScrollContent: { gap: 14, paddingBottom: 10 },
+  railNav: { gap: 3 },
   railSection: {
     fontSize: 10.5,
     fontWeight: '700',

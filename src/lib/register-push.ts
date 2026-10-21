@@ -23,9 +23,15 @@ Notifications.setNotificationHandler({
   }),
 });
 
+/* One registration per app run is enough; every screen calls this. */
+let registering = false;
+let registered = false;
+
 export async function registerPushToken(): Promise<void> {
   if (Platform.OS === 'web') return;
   if (!Device.isDevice) return; // Expo push needs a physical device/emulator
+  if (registering || registered) return;
+  registering = true;
 
   try {
     const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? undefined;
@@ -52,7 +58,10 @@ export async function registerPushToken(): Promise<void> {
       method: 'POST',
       json: { token, platform: Platform.OS },
     });
+    registered = true;
   } catch {
     // push registration is best-effort; the app fully works without it
+  } finally {
+    registering = false;
   }
 }

@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const bin = await createBinByAdmin(parsed.data);
+  const bin = await createBinByAdmin(user, parsed.data);
   if (!bin) return Response.json({ error: 'Unknown category' }, { status: 422 });
   return Response.json(bin, { status: 201 });
 }

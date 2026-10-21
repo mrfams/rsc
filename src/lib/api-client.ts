@@ -1,19 +1,25 @@
 import { Platform } from 'react-native';
 
+import Constants from 'expo-constants';
+
+import { resolveApiBase } from '@/lib/api-base';
 import { authClient } from '@/lib/auth-client';
 
 /**
  * Typed fetch wrapper for the app's own API routes.
  *
  * - Web: same-origin, cookies flow automatically.
- * - Native: the Expo dev/prod origin differs; EXPO_PUBLIC_API_URL must point
- *   at the deployed server, and the session cookie is attached manually from
- *   SecureStore (this is what the Better Auth Expo plugin requires).
+ * - Native: see `resolveApiBase` — a physical dev build falls back to Metro's
+ *   LAN address instead of the baked-in localhost URL (which is the phone
+ *   itself), and signed builds use the deployed server. The session cookie is
+ *   attached manually from SecureStore (what the Better Auth Expo plugin
+ *   requires).
  */
-const BASE =
-  Platform.OS === 'web'
-    ? ''
-    : (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8081');
+const BASE = resolveApiBase({
+  platform: Platform.OS,
+  apiUrl: process.env.EXPO_PUBLIC_API_URL,
+  hostUri: Constants.expoConfig?.hostUri,
+});
 
 export type ApiError = Error & { status?: number };
 

@@ -4,14 +4,14 @@
  * - Leaflet is imported lazily so it never runs during SSR.
  * - The geofence can contain multiple disjoint rings (main + medical campus).
  * - Bins render as custom recycling pins, never plain circles.
- * - Curated campus place labels stay readable on streets and satellite.
+ * - Place names come from the basemap tiles, so only bins are drawn on top.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import 'leaflet/dist/leaflet.css';
 
-import { CAMPUS_CENTER, CAMPUS_PLACES, DEFAULT_MAP_ZOOM } from '@/lib/constants';
-import type { MapLabel, MapMarker, MapPolygon, MapViewProps } from './types';
+import { CAMPUS_CENTER, DEFAULT_MAP_ZOOM } from '@/lib/constants';
+import type { MapMarker, MapPolygon, MapViewProps } from './types';
 
 type LeafletModule = typeof import('leaflet');
 type LeafletMap = import('leaflet').Map;
@@ -34,14 +34,6 @@ const ATTRIBUTIONS: Record<string, string> = {
 const LABELS_URL =
   'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
 
-const DEFAULT_LABELS: MapLabel[] = CAMPUS_PLACES.map((place) => ({
-  id: place.name,
-  name: place.short,
-  latitude: place.latitude,
-  longitude: place.longitude,
-  priority: place.priority,
-}));
-
 const PIN_CSS = `
 .rct-pin { background: transparent !important; border: 0 !important; }
 .rct-pin svg { display:block; filter: drop-shadow(0 5px 8px rgba(16,20,19,.28)); transform-origin: 50% 100%; transition: transform .16s ease; }
@@ -49,8 +41,6 @@ const PIN_CSS = `
 .rct-pin.is-selected svg { transform: scale(1.16); }
 .rct-num { display:flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:50%; border:2.5px solid #fff; color:#fff; font: 700 12px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; box-shadow: 0 4px 10px rgba(16,20,19,.28); transition: transform .15s ease; }
 .rct-num.is-selected { transform: scale(1.25); }
-.rct-label-anchor { background: transparent !important; border: 0 !important; pointer-events: none !important; }
-.rct-label { display:inline-block; transform: translate(-50%, -50%); white-space:nowrap; color:#18211e; background:rgba(255,255,255,.88); border:1px solid rgba(16,20,19,.08); border-radius:7px; padding:2px 6px; font: 600 10.5px/1.25 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; letter-spacing:-.1px; box-shadow:0 1px 3px rgba(16,20,19,.12); backdrop-filter: blur(4px); }
 .leaflet-container { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
 .leaflet-control-zoom { border: 1px solid #E3E8E5 !important; border-radius: 14px !important; overflow: hidden; box-shadow: 0 8px 24px rgba(16,20,19,.14) !important; }
 .leaflet-control-zoom a { width: 38px !important; height: 38px !important; line-height: 38px !important; color: #101413 !important; background: rgba(255,255,255,.96) !important; font-size: 18px !important; }
@@ -109,29 +99,16 @@ function markerSignature(marker: MapMarker): string {
   return [marker.kind ?? 'bin', safeColor(marker.color), marker.selected ? 1 : 0, marker.label ?? ''].join('|');
 }
 
-function labelHtml(label: MapLabel): string {
-  return `<span class="rct-label">${escapeHtml(label.name)}</span>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
 export default function WebMapView({
   markers,
   center = CAMPUS_CENTER,
   zoom = DEFAULT_MAP_ZOOM,
   onPressMarker,
   onPressMap,
-  basemap = 'streets',
+  basemap = 'satellite',
   polygon,
   polygons,
   maskOutside = false,
-  labels = DEFAULT_LABELS,
   fitToPolygon = false,
   style,
 }: MapViewProps) {
@@ -139,16 +116,14 @@ export default function WebMapView({
   const mapRef = useRef<LeafletMap | null>(null);
   const leafletRef = useRef<LeafletModule | null>(null);
   const baseLayerRef = useRef<LeafletLayer | null>(null);
-  const labelsLayerRef = useRef<LeafletLayer | null>(null);
+  const placesLayerRef = useRef<LeafletLayer | null>(null);
   const polygonLayerRef = useRef<LeafletLayer | null>(null);
   const maskLayerRef = useRef<LeafletLayer | null>(null);
   const pinsRef = useRef(new Map<string, { layer: import('leaflet').Marker; signature: string }>());
-  const labelsRef = useRef(new Map<string, import('leaflet').Marker>());
   const markersRef = useRef(markers);
   const onPressMarkerRef = useRef(onPressMarker);
   const onPressMapRef = useRef(onPressMap);
   const [ready, setReady] = useState(false);
-  const [currentZoom, setCurrentZoom] = useState(zoom);
 
   const rings: MapPolygon[] = useMemo(
     () => polygons ?? (polygon && polygon.length >= 3 ? [polygon] : []),
@@ -166,7 +141,6 @@ export default function WebMapView({
     let cancelled = false;
     let resizeObserver: ResizeObserver | null = null;
     const pins = pinsRef.current;
-    const labelLayers = labelsRef.current;
 
     (async () => {
       const L = await import('leaflet');
@@ -184,7 +158,6 @@ export default function WebMapView({
       map.on('click', (event) => {
         onPressMapRef.current?.(event.latlng.lat, event.latlng.lng);
       });
-      map.on('zoomend', () => setCurrentZoom(map.getZoom()));
 
       mapRef.current = map;
 
@@ -207,11 +180,10 @@ export default function WebMapView({
       if (map) map.remove();
       mapRef.current = null;
       baseLayerRef.current = null;
-      labelsLayerRef.current = null;
+      placesLayerRef.current = null;
       polygonLayerRef.current = null;
       maskLayerRef.current = null;
       pins.clear();
-      labelLayers.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -223,8 +195,8 @@ export default function WebMapView({
     if (!ready || !L || !map) return;
 
     baseLayerRef.current?.remove();
-    labelsLayerRef.current?.remove();
-    labelsLayerRef.current = null;
+    placesLayerRef.current?.remove();
+    placesLayerRef.current = null;
 
     baseLayerRef.current = L.tileLayer(TILE_URLS[basemap], {
       maxZoom: 20,
@@ -235,7 +207,7 @@ export default function WebMapView({
     }).addTo(map);
 
     if (basemap === 'satellite') {
-      labelsLayerRef.current = L.tileLayer(LABELS_URL, {
+      placesLayerRef.current = L.tileLayer(LABELS_URL, {
         maxZoom: 20,
         maxNativeZoom: 19,
         opacity: 0.95,
@@ -296,42 +268,6 @@ export default function WebMapView({
       map.fitBounds(L.latLngBounds(all), { padding: [34, 34], maxZoom: 17, animate: false });
     }
   }, [rings, maskOutside, fitToPolygon, ready]);
-
-  /* Place labels */
-  useEffect(() => {
-    const L = leafletRef.current;
-    const map = mapRef.current;
-    if (!ready || !L || !map) return;
-
-    const seen = new Set<string>();
-    const visible = labels.filter(
-      (label) => currentZoom >= 15.5 || (label.priority ?? 1) === 1,
-    );
-
-    for (const label of visible) {
-      seen.add(label.id);
-      if (labelsRef.current.has(label.id)) continue;
-      const layer = L.marker([label.latitude, label.longitude], {
-        icon: L.divIcon({
-          className: 'rct-label-anchor',
-          html: labelHtml(label),
-          iconSize: [0, 0],
-          iconAnchor: [0, 0],
-        }),
-        interactive: false,
-        keyboard: false,
-        zIndexOffset: -100,
-      }).addTo(map);
-      labelsRef.current.set(label.id, layer);
-    }
-
-    for (const [id, layer] of labelsRef.current) {
-      if (!seen.has(id)) {
-        layer.remove();
-        labelsRef.current.delete(id);
-      }
-    }
-  }, [labels, ready, currentZoom]);
 
   /* Markers */
   useEffect(() => {

@@ -62,6 +62,29 @@ log(
 
 const signedCookie = cookie;
 
+// Leaderboard is private by default: no public rank until the member allows it.
+const mePrivate = await req('/api/me');
+expect(
+  'leaderboard-private-by-default',
+  mePrivate.status === 200 &&
+    mePrivate.body?.leaderboardOptIn === false &&
+    mePrivate.body?.stats?.rank === null,
+  {
+    leaderboardOptIn: mePrivate.body?.leaderboardOptIn,
+    rank: mePrivate.body?.stats?.rank,
+  },
+);
+
+const allowBoard = await req('/api/me', {
+  method: 'PATCH',
+  body: JSON.stringify({ leaderboardOptIn: true }),
+});
+expect(
+  'leaderboard-opt-in',
+  allowBoard.status === 200 && allowBoard.body?.leaderboardOptIn === true,
+  allowBoard.body,
+);
+
 const report = await req('/api/reports', {
   method: 'POST',
   body: JSON.stringify({ lat: 35.14472, lng: 33.90788, category: 'glass', note: 'api flow test' }),
@@ -130,12 +153,46 @@ expect(
 const dispute = await req(`/api/bins/${binId}/dispute`, { method: 'POST', body: '{}' });
 expect('dispute-status', dispute.status === 200 && dispute.body?.status === 'disputed', dispute.body);
 
-// --- Trust stats via /api/me ---
+// --- Points + leaderboard via /api/me ---
 const me = await req('/api/me');
 expect(
-  'me-stats',
-  me.status === 200 && typeof me.body?.stats?.trustScore === 'number' && me.body.stats.reportsCount >= 1,
-  me.body,
+  'me-points-and-rank',
+  me.status === 200 &&
+    typeof me.body?.stats?.points === 'number' &&
+    me.body.stats.points > 0 &&
+    typeof me.body.stats.rank === 'number' &&
+    me.body.stats.rank >= 1 &&
+    Array.isArray(me.body.stats.leaderboard) &&
+    me.body.stats.leaderboard.some((row) => row.isYou === true) &&
+    me.body.stats.reportsCount >= 1,
+  me.body?.stats,
+);
+
+const publicBoard = await req('/api/leaderboard');
+expect(
+  'leaderboard-top10-shared-only',
+  publicBoard.status === 200 &&
+    Array.isArray(publicBoard.body?.rows) &&
+    publicBoard.body.rows.some((row) => row.isYou === true) &&
+    publicBoard.body.rows.every((row) => row.name && typeof row.points === 'number'),
+  publicBoard.body,
+);
+
+// Opting out hides the rank and the name again.
+const leaveBoard = await req('/api/me', {
+  method: 'PATCH',
+  body: JSON.stringify({ leaderboardOptIn: false }),
+});
+expect(
+  'leaderboard-opt-out',
+  leaveBoard.status === 200 && leaveBoard.body?.leaderboardOptIn === false,
+  leaveBoard.body,
+);
+const mePrivateAgain = await req('/api/me');
+expect(
+  'leaderboard-hidden-after-opt-out',
+  mePrivateAgain.body?.leaderboardOptIn === false && mePrivateAgain.body?.stats?.rank === null,
+  { optIn: mePrivateAgain.body?.leaderboardOptIn, rank: mePrivateAgain.body?.stats?.rank },
 );
 
 // --- Admin gate: non-admins get 403 on moderation routes ---
@@ -199,6 +256,28 @@ expect(
     Array.isArray(campusAdmin.body?.campusPolygons) &&
     campusAdmin.body.campusPolygons.length >= 3,
   campusAdmin.body?.campusPolygons?.length,
+);
+
+// --- Bin types: create a throwaway type and delete it again ---
+const typeSlug = `flow_type_${Date.now()}`;
+const createdType = await req('/api/admin/categories', {
+  method: 'POST',
+  body: JSON.stringify({ slug: typeSlug, name: 'Flow Type', emoji: '🧪', color: '#0E7C5A' }),
+});
+expect(
+  'admin-create-type',
+  createdType.status === 201 && createdType.body?.slug === typeSlug,
+  createdType.body,
+);
+
+const deletedType = await req('/api/admin/categories', {
+  method: 'DELETE',
+  body: JSON.stringify({ slug: typeSlug }),
+});
+expect(
+  'admin-delete-type',
+  deletedType.status === 200 && deletedType.body?.ok === true,
+  deletedType.body,
 );
 
 const createdBin = await req('/api/admin/bins', {

@@ -20,6 +20,7 @@ import { StatusPill } from '@/components/ui/StatusPill';
 import { api } from '@/lib/api-client';
 import { useSession } from '@/lib/auth-client';
 import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
+import { displayNote } from '@/lib/notes';
 import { registerPushToken } from '@/lib/register-push';
 import { RADIUS, SHADOW, STATUS_META, timeAgo, type StatusKey } from '@/lib/theme';
 import { categoryEmoji } from '@/lib/validation';
@@ -91,7 +92,7 @@ export default function AlertsScreen() {
             </View>
             <Text style={styles.guestTitle}>Your bin activity</Text>
             <Text style={styles.guestText}>
-              Sign in to follow what happens after you report: community confirmations, missing
+              Sign in to follow what happens after you add a bin: community confirmations, missing
               reports and moderation updates.
             </Text>
             <Button
@@ -119,7 +120,7 @@ export default function AlertsScreen() {
         subtitle={
           awaiting > 0
             ? `${awaiting} report${awaiting === 1 ? '' : 's'} awaiting review`
-            : 'Updates on the bins you reported.'
+            : 'Updates on the bins you added.'
         }
         right={
           <Button
@@ -155,10 +156,10 @@ export default function AlertsScreen() {
             title={filter === 'all' ? 'No activity yet' : 'Nothing here'}
             message={
               filter === 'all'
-                ? 'Add your first bin with the Report button — its status updates will show up here.'
+                ? 'Add your first bin with the Add button — its status updates will show up here.'
                 : 'Switch the filter to see the rest of your reports.'
             }
-            actionLabel={filter === 'all' ? 'Report a bin' : undefined}
+            actionLabel={filter === 'all' ? 'Add a bin' : undefined}
             onAction={filter === 'all' ? () => router.push('/report/new') : undefined}
           />
         ) : null}
@@ -169,6 +170,7 @@ export default function AlertsScreen() {
             ? report.bin.status
             : 'pending') as StatusKey;
           const meta = STATUS_META[status];
+          const note = displayNote(report.note);
           return (
             <Pressable
               key={report.id}
@@ -189,9 +191,9 @@ export default function AlertsScreen() {
                 <Text style={styles.cardSub} numberOfLines={1}>
                   {cat.emoji} {cat.name} · {statusCopy(status)}
                 </Text>
-                {report.note?.trim() ? (
+                {note ? (
                   <Text style={styles.cardNote} numberOfLines={1}>
-                    “{report.note.trim()}”
+                    “{note}”
                   </Text>
                 ) : null}
                 <Text style={styles.cardDate}>{timeAgo(report.createdAt)}</Text>
@@ -203,7 +205,7 @@ export default function AlertsScreen() {
 
         {reports.length > 0 ? (
           <Text style={styles.footerHint}>
-            Alerts follow the bins you reported. Tap any card to open it on the map.
+            Alerts follow the bins you added. Tap any card to open it on the map.
           </Text>
         ) : null}
       </ScrollView>
