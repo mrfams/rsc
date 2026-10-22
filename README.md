@@ -107,6 +107,11 @@ npm run seed              # categories, admin and starter bins inside the real c
 
 ## Deploy (Vercel + Neon)
 
+The live API origin is **`https://emu-bin-tracker.vercel.app`** (the
+`emu-bin-tracker` Vercel project). `EXPO_PUBLIC_API_URL` and the installed app
+point there; keep `.vercel` linked to that project when you deploy so an OTA
+update never talks to an older API.
+
 1. **Environment variables** (project settings):
    - `DATABASE_URL` — Neon pooled connection string
    - `BETTER_AUTH_SECRET` — random 32+ chars
