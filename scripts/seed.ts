@@ -113,7 +113,7 @@ async function main() {
         lng: b.lng + 0.00002,
         category: b.category,
         name: b.name,
-        note: 'Confirmed on a later walk',
+        note: 'Still here on a later visit',
       });
       await db
         .update(bins)

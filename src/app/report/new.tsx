@@ -577,10 +577,11 @@ export default function NewReportScreen() {
               )}
 
               <Field
-                label="Note"
+                label="Comment (optional)"
                 value={note}
                 onChangeText={setNote}
-                placeholder="e.g. outside the library stairs, slightly full"
+                placeholder="e.g. by the library stairs, lid is broken, often full"
+                hint="A short, useful detail helps the next person find it."
                 multiline
                 maxLength={500}
                 icon="create-outline"

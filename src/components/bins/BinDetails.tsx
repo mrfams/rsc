@@ -18,13 +18,12 @@ import {
 import { Button } from '@/components/ui/Button';
 import { useFeedback } from '@/components/ui/Feedback';
 import { Notice } from '@/components/ui/Notice';
-import { StatusPill } from '@/components/ui/StatusPill';
 import { api } from '@/lib/api-client';
 import { useSession } from '@/lib/auth-client';
 import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
 import { displayArea, displayNote } from '@/lib/notes';
 import { preparePhoto } from '@/lib/photo-client';
-import { RADIUS, timeAgo } from '@/lib/theme';
+import { RADIUS, STATUS_META, timeAgo, type StatusKey } from '@/lib/theme';
 import { useMe } from '@/lib/use-me';
 import { BIN_STATUS_LABEL, binStatusEnum, categoryEmoji, type BinStatus } from '@/lib/validation';
 
@@ -58,6 +57,12 @@ type BinDetail = {
 type Config = {
   categories: { slug: string; name: string; color: string; emoji: string; active: boolean }[];
 };
+
+/**
+ * The card is focused on the bin itself for now. Flip this back on to restore
+ * the per-sighting list (and the admin delete controls that live inside it).
+ */
+const SHOW_SIGHTING_HISTORY = false;
 
 export function BinDetails({
   binId,
@@ -164,7 +169,6 @@ export function BinDetails({
           lat: bin?.lat,
           lng: bin?.lng,
           category: bin?.category,
-          note: 'Added a photo of this bin',
           photoBase64,
         },
       }),
@@ -257,6 +261,12 @@ export function BinDetails({
   const signedIn = Boolean(session?.user);
   const removed = bin.status === 'removed';
   const alreadySighted = bin.hasSighted === true;
+  const statusKey: StatusKey =
+    bin.status === 'verified' || bin.status === 'disputed' || bin.status === 'removed'
+      ? bin.status
+      : 'pending';
+  const statusMeta = STATUS_META[statusKey];
+  const statusLabel = BIN_STATUS_LABEL[statusKey];
   const displayName = bin.name?.trim() || `${category.name} bin`;
   // A member confirms once. A later "gone" flag makes confirmation useful again.
   const needsSighting = !bin.hasSighted || bin.status === 'disputed';
@@ -348,10 +358,15 @@ export function BinDetails({
           <Text style={styles.title} numberOfLines={1}>
             {displayName}
           </Text>
-          <Text style={styles.subtitle} numberOfLines={1}>
-            {category.name} · {bin.reportCount} sighting{bin.reportCount === 1 ? '' : 's'} ·{' '}
-            {timeAgo(bin.updatedAt)}
-          </Text>
+          <View style={styles.subtitleRow}>
+            <Text style={styles.subtitle} numberOfLines={1}>
+              {category.name}
+            </Text>
+            <View style={[styles.statusDot, { backgroundColor: statusMeta.color }]} />
+            <Text style={[styles.subtitle, styles.statusText, { color: statusMeta.color }]}>
+              {statusLabel}
+            </Text>
+          </View>
         </View>
         {onClose ? (
           <Pressable
@@ -436,28 +451,35 @@ export function BinDetails({
           </View>
         )}
 
-        <View style={styles.chipRow}>
-          <StatusPill status={bin.status} />
-          {displayArea(bin.area) ? (
+        {displayArea(bin.area) ? (
+          <View style={styles.chipRow}>
             <View style={styles.areaPill}>
               <Ionicons name="location-outline" size={12} color={COLORS.textMuted} />
               <Text style={styles.areaText} numberOfLines={1}>
                 {displayArea(bin.area)}
               </Text>
             </View>
-          ) : null}
-        </View>
+          </View>
+        ) : null}
 
         {notice ? (
           <Notice tone={notice.tone} message={notice.text} onDismiss={() => setNotice(null)} />
         ) : null}
 
         {latestNote ? (
-          <View style={styles.quoteCard}>
-            <Ionicons name="chatbubble-ellipses-outline" size={15} color={COLORS.textMuted} />
-            <Text style={styles.quoteText} numberOfLines={3}>
-              “{latestNote}”
-            </Text>
+          <View style={styles.noteCard}>
+            <Ionicons
+              name="chatbubble-ellipses-outline"
+              size={15}
+              color={COLORS.textMuted}
+              style={styles.noteIcon}
+            />
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={styles.noteLabel}>Latest note</Text>
+              <Text style={styles.noteText} numberOfLines={3}>
+                {latestNote}
+              </Text>
+            </View>
           </View>
         ) : null}
 
@@ -511,11 +533,6 @@ export function BinDetails({
 
         <View style={styles.statsRow}>
           <Stat label="Sightings" value={String(bin.reportCount)} icon="eye-outline" />
-          <Stat
-            label="Status"
-            value={BIN_STATUS_LABEL[bin.status as BinStatus] ?? bin.status}
-            icon="shield-checkmark-outline"
-          />
           <Stat label="Added" value={timeAgo(bin.createdAt)} icon="calendar-outline" />
         </View>
 
@@ -546,53 +563,64 @@ export function BinDetails({
           </View>
         ) : null}
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Sighting history</Text>
-          <Text style={styles.sectionMeta}>{bin.reports.length} recent</Text>
-        </View>
-
-        {bin.reports.length === 0 ? (
-          <Text style={styles.muted}>No sightings recorded yet.</Text>
-        ) : (
-          bin.reports.map((report) => (
-            <View key={report.id} style={styles.reportRow}>
-              {report.photoUrl ? (
-                <Image source={{ uri: report.photoUrl }} style={styles.thumb} contentFit="cover" />
-              ) : (
-                <View style={[styles.thumb, styles.thumbEmpty, { backgroundColor: `${color}14` }]}>
-                  <Text style={{ fontSize: 18 }}>{category.emoji}</Text>
-                </View>
-              )}
-              <View style={{ flex: 1, gap: 3 }}>
-                <Text style={styles.reportNote} numberOfLines={2}>
-                  {displayNote(report.note) ?? 'Sighting confirmed'}
-                </Text>
-                <Text style={styles.reportMeta}>
-                  {isAdmin ? report.userEmail : 'Community member'} · {timeAgo(report.createdAt)}
-                </Text>
-              </View>
-              {isAdmin ? (
-                <Pressable
-                  onPress={() =>
-                    confirm({
-                      tone: 'warning',
-                      title: 'Delete this sighting?',
-                      message: 'The report is removed permanently. The bin stays on the map.',
-                      confirmLabel: 'Delete',
-                      destructive: true,
-                      onConfirm: () => deleteReport.mutate(report.id),
-                    })
-                  }
-                  hitSlop={8}
-                  accessibilityLabel="Delete report"
-                  style={({ pressed }) => [styles.delete, pressed && { opacity: 0.5 }]}
-                >
-                  <Ionicons name="trash-outline" size={16} color={COLORS.danger} />
-                </Pressable>
-              ) : null}
+        {SHOW_SIGHTING_HISTORY ? (
+          <>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Sighting history</Text>
+              <Text style={styles.sectionMeta}>{bin.reports.length} recent</Text>
             </View>
-          ))
-        )}
+
+            {bin.reports.length === 0 ? (
+              <Text style={styles.muted}>No sightings recorded yet.</Text>
+            ) : (
+              bin.reports.map((report) => (
+                <View key={report.id} style={styles.reportRow}>
+                  {report.photoUrl ? (
+                    <Image
+                      source={{ uri: report.photoUrl }}
+                      style={styles.thumb}
+                      contentFit="cover"
+                    />
+                  ) : (
+                    <View
+                      style={[styles.thumb, styles.thumbEmpty, { backgroundColor: `${color}14` }]}
+                    >
+                      <Text style={{ fontSize: 18 }}>{category.emoji}</Text>
+                    </View>
+                  )}
+                  <View style={{ flex: 1, gap: 3 }}>
+                    <Text style={styles.reportNote} numberOfLines={2}>
+                      {displayNote(report.note) ?? 'Sighting confirmed'}
+                    </Text>
+                    <Text style={styles.reportMeta}>
+                      {isAdmin ? report.userEmail : 'Community member'} ·{' '}
+                      {timeAgo(report.createdAt)}
+                    </Text>
+                  </View>
+                  {isAdmin ? (
+                    <Pressable
+                      onPress={() =>
+                        confirm({
+                          tone: 'warning',
+                          title: 'Delete this sighting?',
+                          message: 'The report is removed permanently. The bin stays on the map.',
+                          confirmLabel: 'Delete',
+                          destructive: true,
+                          onConfirm: () => deleteReport.mutate(report.id),
+                        })
+                      }
+                      hitSlop={8}
+                      accessibilityLabel="Delete report"
+                      style={({ pressed }) => [styles.delete, pressed && { opacity: 0.5 }]}
+                    >
+                      <Ionicons name="trash-outline" size={16} color={COLORS.danger} />
+                    </Pressable>
+                  ) : null}
+                </View>
+              ))
+            )}
+          </>
+        ) : null}
 
         {!signedIn && variant === 'page' ? (
           <Button
@@ -662,7 +690,10 @@ const styles = StyleSheet.create({
   },
   categoryEmoji: { fontSize: 22 },
   title: { fontSize: 20, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
-  subtitle: { fontSize: 12.5, color: COLORS.textMuted, marginTop: 2 },
+  subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
+  subtitle: { fontSize: 12.5, color: COLORS.textMuted },
+  statusDot: { width: 5, height: 5, borderRadius: 3 },
+  statusText: { fontWeight: '700' },
   close: {
     width: 34,
     height: 34,
@@ -737,7 +768,7 @@ const styles = StyleSheet.create({
     maxWidth: '70%',
   },
   areaText: { fontSize: 11.5, fontWeight: '600', color: COLORS.textMuted },
-  quoteCard: {
+  noteCard: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 8,
@@ -745,7 +776,15 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.md,
     padding: 12,
   },
-  quoteText: { flex: 1, fontSize: 12.5, lineHeight: 18, color: COLORS.text, fontStyle: 'italic' },
+  noteIcon: { marginTop: 2 },
+  noteLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  noteText: { fontSize: 12.5, lineHeight: 18, color: COLORS.text },
   actions: { flexDirection: 'row', gap: 9 },
   sightedNote: {
     flexDirection: 'row',
