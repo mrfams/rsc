@@ -1185,7 +1185,7 @@ function PeopleTab() {
         tone: 'success',
         title: vars.isAdmin ? 'Moderator access granted' : 'Moderator access removed',
         message: vars.isAdmin
-          ? 'They can now open the admin workspace.'
+          ? 'They can now open the admin tools.'
           : 'They keep their reports; only admin tools are gone.',
       });
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
@@ -1266,7 +1266,7 @@ function PeopleTab() {
                   confirm({
                     tone: 'warning',
                     title: `Remove ${item.name || item.email}?`,
-                    message: 'They will immediately lose access to the admin workspace.',
+                    message: 'They will immediately lose access to the admin tools.',
                     confirmLabel: 'Remove access',
                     cancelLabel: 'Keep admin',
                     destructive: true,
