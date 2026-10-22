@@ -23,7 +23,7 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://emu-bin-tracker.vercel.app",
-        "EXPO_PUBLIC_ANDROID_DOWNLOAD_URL": "https://expo.dev/artifacts/eas/qoF94m8MU6KXrYjyKlYCC-lgVX1JMrynBNrkeAt2Lf4.apk"
+        "EXPO_PUBLIC_ANDROID_DOWNLOAD_URL": "https://expo.dev/artifacts/eas/92-jN5YIj-vL0uC3fehTreZB__wvTKIGmAVIWN9bW-g.apk"
       },
       "channel": "preview"
     },
@@ -36,7 +36,7 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://emu-bin-tracker.vercel.app",
-        "EXPO_PUBLIC_ANDROID_DOWNLOAD_URL": "https://expo.dev/artifacts/eas/qoF94m8MU6KXrYjyKlYCC-lgVX1JMrynBNrkeAt2Lf4.apk"
+        "EXPO_PUBLIC_ANDROID_DOWNLOAD_URL": "https://expo.dev/artifacts/eas/92-jN5YIj-vL0uC3fehTreZB__wvTKIGmAVIWN9bW-g.apk"
       },
       "channel": "production"
     }

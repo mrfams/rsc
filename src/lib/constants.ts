@@ -297,7 +297,7 @@ export const BOTTOM_NAV_HEIGHT = 78;
  */
 export const ANDROID_DOWNLOAD_URL =
   process.env.EXPO_PUBLIC_ANDROID_DOWNLOAD_URL ??
-  'https://expo.dev/artifacts/eas/qoF94m8MU6KXrYjyKlYCC-lgVX1JMrynBNrkeAt2Lf4.apk';
+  'https://expo.dev/artifacts/eas/92-jN5YIj-vL0uC3fehTreZB__wvTKIGmAVIWN9bW-g.apk';
 
 /** The deployed web app — also the fallback for iOS users until TestFlight. */
 export const APP_WEB_URL = 'https://emu-bin-tracker.vercel.app';
