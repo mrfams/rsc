@@ -32,6 +32,7 @@ export default function DownloadScreen() {
   const [checking, setChecking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [tone, setTone] = useState<'info' | 'success' | 'error'>('info');
+  const [showQr, setShowQr] = useState(false);
 
   const { data } = useQuery({
     queryKey: ['download'],
@@ -112,37 +113,55 @@ export default function DownloadScreen() {
           </View>
 
           <Text style={styles.body}>
-            We are not on the Play Store yet, so the app is shared as a normal install file. Scan
-            the code with your camera, or use the button below.
+            We are not on the Play Store yet, so the app comes as a normal install file. Tap the
+            button, the download starts, then open the file to install it.
           </Text>
-
-          <View style={styles.qrRow}>
-            <View style={styles.qrBox}>
-              <QRCode
-                value={androidUrl}
-                size={168}
-                color={COLORS.text}
-                backgroundColor="#FFFFFF"
-                quietZone={4}
-              />
-            </View>
-            <View style={styles.qrSide}>
-              <Text style={styles.qrHint}>Point your camera at the code to download the app.</Text>
-              <Text style={styles.qrHintMuted} numberOfLines={3}>
-                {androidUrl}
-              </Text>
-            </View>
-          </View>
 
           <Button
             title="Download the app"
             icon="download-outline"
             onPress={() => void openUrl(androidUrl)}
           />
+
           <Text style={styles.footnote}>
-            Android will ask you to allow installs from this source the first time. Updates then
-            arrive inside the app.
+            Android will ask you once to allow installs from this source. After that the app
+            updates itself — no new download needed.
           </Text>
+
+          <Pressable
+            onPress={() => setShowQr((open) => !open)}
+            accessibilityRole="button"
+            style={styles.qrToggle}
+          >
+            <Ionicons
+              name={showQr ? 'chevron-down' : 'qr-code-outline'}
+              size={16}
+              color={COLORS.primary}
+            />
+            <Text style={styles.qrToggleText}>
+              {showQr ? 'Hide the QR code' : 'Show a QR code for posters'}
+            </Text>
+          </Pressable>
+
+          {showQr ? (
+            <View style={styles.qrRow}>
+              <View style={styles.qrBox}>
+                <QRCode
+                  value={androidUrl}
+                  size={168}
+                  color={COLORS.text}
+                  backgroundColor="#FFFFFF"
+                  quietZone={4}
+                />
+              </View>
+              <View style={styles.qrSide}>
+                <Text style={styles.qrHint}>Point a camera at the code to get the same file.</Text>
+                <Text style={styles.qrHintMuted} numberOfLines={3}>
+                  {androidUrl}
+                </Text>
+              </View>
+            </View>
+          ) : null}
         </Card>
 
         {/* -------------------------------- iPhone ----------------------------- */}
@@ -153,13 +172,14 @@ export default function DownloadScreen() {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>iPhone & iPad</Text>
-              <Text style={styles.cardMeta}>No App Store listing yet</Text>
+              <Text style={styles.cardMeta}>Add to Home Screen</Text>
             </View>
           </View>
 
           <Text style={styles.body}>
-            The iOS build is not signed for the App Store, so iPhone users get the same map in the
-            browser. Open it, then use “Add to Home Screen” — it behaves like an installed app.
+            The iOS build is not signed for the App Store yet, so iPhone users get the same map in
+            the browser. Open it, tap Share, then “Add to Home Screen” — it launches full screen
+            with its own icon.
           </Text>
 
           <Button
@@ -248,6 +268,14 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 15.5, fontWeight: '800', color: COLORS.text },
   cardMeta: { fontSize: 12, color: COLORS.textMuted, marginTop: 1 },
   body: { fontSize: 13.5, lineHeight: 20, color: COLORS.textMuted },
+  qrToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 6,
+  },
+  qrToggleText: { fontSize: 13, fontWeight: '700', color: COLORS.primary },
   qrRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   qrBox: {
     padding: 10,
@@ -259,7 +287,7 @@ const styles = StyleSheet.create({
   },
   qrSide: { flex: 1, gap: 6 },
   qrHint: { fontSize: 12.5, lineHeight: 18, color: COLORS.text, fontWeight: '600' },
-  qrHintMuted: { fontSize: 11, lineHeight: 15, color: COLORS.textMuted },
+  qrHintMuted: { fontSize: 11.5, lineHeight: 15, color: COLORS.textMuted },
   footnote: { fontSize: 11.5, lineHeight: 16, color: COLORS.textMuted },
   backToMap: {
     flexDirection: 'row',

@@ -26,6 +26,7 @@
     "drizzle-kit": "^0.31.11",
     "drizzle-orm": "^0.45.4",
     "expo": "~58.0.17",
+    "expo-build-properties": "~58.0.11",
     "expo-constants": "~58.0.13",
     "expo-dev-client": "~58.0.14",
     "expo-device": "^58.0.5",
@@ -76,6 +77,8 @@
     "db:push": "drizzle-kit push",
     "deploy": "vercel deploy --prebuilt",
     "build:android": "npx eas-cli@latest build --platform android --profile preview",
+    "build:android:production": "npx eas-cli@latest build --platform android --profile production",
+    "publish:apk": "tsx scripts/publish-apk.ts",
     "update:preview": "npx eas-cli@latest update --channel preview --environment preview --auto",
     "update:production": "npx eas-cli@latest update --channel production --environment production --auto"
   },
