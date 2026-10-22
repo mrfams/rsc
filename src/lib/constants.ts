@@ -286,3 +286,18 @@ export const SOCIAL_LINKS = {
 
 /** Vertical space reserved for the floating mobile tab bar. */
 export const BOTTOM_NAV_HEIGHT = 78;
+
+/**
+ * Where people install the app without a store.
+ *
+ * Android builds ship as an APK through EAS internal distribution, so this is
+ * a direct artifact download. The admin can point the app at a newer build
+ * from /admin → Overview → “App download link” (stored in `app_config`, read
+ * at runtime); this constant is the fallback baked into the bundle.
+ */
+export const ANDROID_DOWNLOAD_URL =
+  process.env.EXPO_PUBLIC_ANDROID_DOWNLOAD_URL ??
+  'https://expo.dev/artifacts/eas/qoF94m8MU6KXrYjyKlYCC-lgVX1JMrynBNrkeAt2Lf4.apk';
+
+/** The deployed web app — also the fallback for iOS users until TestFlight. */
+export const APP_WEB_URL = 'https://emu-bin-tracker.vercel.app';

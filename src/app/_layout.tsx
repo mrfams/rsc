@@ -33,6 +33,7 @@ export default function RootLayout() {
               <Stack.Screen name="report/new" options={{ presentation: 'modal' }} />
               <Stack.Screen name="report/[id]" />
               <Stack.Screen name="profile" />
+              <Stack.Screen name="download" />
             </Stack>
           </AppShell>
         ) : (

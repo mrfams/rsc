@@ -22,6 +22,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LeaderboardCard } from '@/components/LeaderboardCard';
 import Sidebar from '@/components/Sidebar';
+import { UpdateBanner } from '@/components/updates/UpdateBanner';
 import { BrandMark } from '@/components/ui/BrandMark';
 import { Button } from '@/components/ui/Button';
 import { SocialLinks } from '@/components/ui/SocialLinks';
@@ -94,7 +95,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return (
       <View style={styles.desktopShell}>
         <DesktopSidebar />
-        <View style={styles.desktopContent}>{children}</View>
+        <View style={styles.desktopContent}>
+          <UpdateBanner />
+          {children}
+        </View>
       </View>
     );
   }
@@ -102,6 +106,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <View style={styles.shell}>
       {children}
+      <UpdateBanner />
       <BottomNav />
     </View>
   );
@@ -181,6 +186,14 @@ export function DesktopSidebar() {
       </ScrollView>
 
       <View style={styles.railFooter}>
+        <Pressable
+          onPress={() => router.navigate('/download')}
+          style={({ pressed }) => [styles.railDownload, pressed && { opacity: 0.7 }]}
+          accessibilityRole="link"
+        >
+          <Ionicons name="download-outline" size={17} color={COLORS.primary} />
+          <Text style={styles.railDownloadText}>Get the app</Text>
+        </Pressable>
         <SocialLinks compact label="Community" />
         <Pressable
           onPress={() => router.navigate(session?.user ? '/stats' : '/sign-in')}
@@ -365,6 +378,16 @@ const styles = StyleSheet.create({
   railLabelActive: { color: COLORS.text, fontWeight: '700' },
   railDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: COLORS.primary },
   railFooter: { gap: 14 },
+  railDownload: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.primarySoft,
+  },
+  railDownloadText: { fontSize: 13.5, fontWeight: '700', color: COLORS.primary },
   accountCard: {
     flexDirection: 'row',
     alignItems: 'center',

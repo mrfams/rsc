@@ -523,6 +523,8 @@ function OverviewTab({
         />
       </View>
 
+      <DownloadLinkCard />
+
       <Card padded={false}>
         <View style={[styles.cardHeaderRow, styles.cardHeaderPad]}>
           <Text style={styles.cardTitle}>Recently updated</Text>
@@ -556,6 +558,86 @@ function OverviewTab({
         )}
       </Card>
     </ScrollView>
+  );
+}
+
+/* ---------------------------- Download link -------------------------------- */
+
+/**
+ * Where the “Get the app” page sends people.
+ *
+ * Every EAS build produces its own APK artifact URL, so the link is edited
+ * here instead of in code: paste the new URL after a build and the download
+ * page (and the QR code on it) points at it straight away.
+ */
+function DownloadLinkCard() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const { toast } = useFeedback();
+  // The field follows the server value until the admin starts typing.
+  const [edited, setEdited] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const { data } = useQuery({
+    queryKey: ['admin-download'],
+    queryFn: () => api<{ androidUrl: string }>('/api/admin/download'),
+  });
+
+  const value = edited ?? data?.androidUrl ?? '';
+
+  const save = useMutation({
+    mutationFn: () =>
+      api<{ androidUrl: string }>('/api/admin/download', {
+        method: 'PUT',
+        json: { androidUrl: value },
+      }),
+    onSuccess: (result) => {
+      setError(null);
+      setEdited(result.androidUrl);
+      queryClient.invalidateQueries({ queryKey: ['admin-download'] });
+      queryClient.invalidateQueries({ queryKey: ['download'] });
+      toast({
+        tone: 'success',
+        title: 'Download link updated',
+        message: 'The download page and its QR code now point at the new build.',
+      });
+    },
+    onError: (err) => setError(err.message),
+  });
+
+  return (
+    <Card style={{ gap: 12 }}>
+      <View style={styles.cardHeaderRow}>
+        <Text style={styles.cardTitle}>App download link</Text>
+        <Pressable
+          onPress={() => router.push('/download')}
+          accessibilityRole="link"
+          style={({ pressed }) => [pressed && { opacity: 0.7 }]}
+        >
+          <Text style={styles.textLink}>Open page</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.muted}>
+        Paste the APK link of the latest EAS build. Everyone who opens “Get the app” — and scans
+        the QR code — gets that build, without a new app release.
+      </Text>
+      <Field
+        label="Android APK link"
+        value={value}
+        onChangeText={setEdited}
+        placeholder="https://expo.dev/artifacts/eas/….apk"
+        autoCapitalize="none"
+        autoCorrect={false}
+        error={error}
+      />
+      <Button
+        title="Save link"
+        icon="save-outline"
+        size="sm"
+        loading={save.isPending}
+        onPress={() => save.mutate()}
+      />
+    </Card>
   );
 }
 

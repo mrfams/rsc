@@ -22,6 +22,9 @@ type DrawerItem = {
   hint?: string;
 };
 
+/** Routes that stay open for guests — the map and the download page. */
+const PUBLIC_ROUTES = new Set(['/', '/download']);
+
 function drawerItems(isAdmin: boolean): DrawerItem[] {
   return [
     { key: 'map', label: 'Campus map', icon: 'map-outline', href: '/', hint: 'Find and add bins' },
@@ -38,6 +41,13 @@ function drawerItems(isAdmin: boolean): DrawerItem[] {
       icon: 'stats-chart-outline',
       href: '/stats',
       hint: 'Points, rank and history',
+    },
+    {
+      key: 'download',
+      label: 'Get the app',
+      icon: 'download-outline',
+      href: '/download',
+      hint: 'Install it on your phone',
     },
     ...(isAdmin
       ? [
@@ -83,7 +93,7 @@ export default function Sidebar({
 
   function go(href: string) {
     onClose();
-    if (!signedIn && href !== '/') {
+    if (!signedIn && !PUBLIC_ROUTES.has(href)) {
       router.push('/sign-in');
       return;
     }

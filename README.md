@@ -124,6 +124,108 @@ app adds bin pins only — it does not draw its own place names. The map needs a
 development build (`npx expo run:android` / EAS build); Expo Go cannot render
 the native module.
 
+## Native builds, OTA updates and distribution
+
+There is no Play Store or App Store listing yet, so Android users install the
+APK that EAS builds and iPhone users use the web app. The important part:
+**an EAS build embeds the JavaScript bundle**, so the installed app runs on its
+own — nobody needs `npx expo start` on your laptop, and the app keeps working
+when your laptop is off.
+
+| Piece | What it is |
+|---|---|
+| EAS project | `@famara2ray/rscemu` (`projectId` lives in `app.json` → `extra.eas.projectId`) |
+| Build | `eas build --platform android --profile preview` → signed, installable APK |
+| Update | `eas update --channel preview --environment preview` → new JS/UI for every installed copy |
+| Install link | EAS internal-distribution URL (public by default) + QR code on `/download` |
+
+### Build profiles and channels (`eas.json`)
+
+| Profile | Channel | What it is for |
+|---|---|---|
+| `development` | `development` | Dev client with the dev menu — for you while coding |
+| `preview` | `preview` | Standalone APK you hand to students (has `expo-updates` inside) |
+| `production` | `production` | Same, but the channel real users follow |
+
+A build's **channel** decides which updates it pulls. `preview` builds listen
+to the `preview` channel, `production` builds to `production`. Publish to the
+channel that matches the build your users have.
+
+### Everyday workflow
+
+```bash
+# 1. change the code, then commit
+git add -A && git commit -m "Tweak the bin card layout"
+
+# 2. ship it to every installed copy — no new APK, no store review
+npm run update:preview        # -> eas update --channel preview --environment preview --auto
+```
+
+The app checks for updates on launch, downloads the new bundle in the
+background and shows a **“New version available — Update / Restart”** banner
+(`src/components/updates/UpdateBanner.tsx`). Users can also tap **Check for
+updates** on the `/download` page. Web builds deploy through Vercel instead —
+`src/lib/updates.web.ts` is a no-op twin of the native module.
+
+Roll out gradually, watch the error rate, roll back if it goes wrong:
+
+```bash
+npx eas-cli@latest update --channel preview --environment preview --rollout-percentage 20
+npx eas-cli@latest update:republish --branch main   # roll back to the previous update
+npx eas-cli@latest channel:pause preview            # stop serving updates on a channel
+```
+
+### What OTA can and cannot do
+
+| Change | OTA? |
+|---|---|
+| UI, copy, colours, layouts, new screens | ✅ yes |
+| API calls, business logic, server-side changes | ✅ yes (the API deploys on its own) |
+| New native module, new permission, icon/splash, SDK upgrade | ❌ needs a new build |
+
+`runtimeVersion` uses the **fingerprint** policy, so the runtime only changes
+when native dependencies change — a cosmetic rebuild keeps serving OTA updates
+to everyone who already installed the app.
+
+### Shipping a new APK (new native code)
+
+```bash
+npm run build:android      # eas build --platform android --profile preview
+```
+
+Then copy the **Application Archive URL** from the build page into
+`/admin → Overview → App download link`. It is stored in `app_config`, so the
+`/download` page, its QR code and the in-app button point at the new build
+immediately — no app update, no redeploy. The value is also mirrored in
+`EXPO_PUBLIC_ANDROID_DOWNLOAD_URL` (build env) and `ANDROID_DOWNLOAD_URL`
+(`src/lib/constants.ts`) as the offline fallback.
+
+### Environment variables for updates
+
+SDK 55+ requires `--environment` on `eas update`, and only variables from that
+EAS environment are bundled (local `.env` files are ignored). `EXPO_PUBLIC_API_URL`
+is set for `production`, `preview` and `development` on the EAS project:
+
+```bash
+npx eas-cli@latest env:list production
+npx eas-cli@latest env:set --name EXPO_PUBLIC_API_URL \
+  --value https://emu-bin-tracker.vercel.app --environment production
+```
+
+### iPhone
+
+Without an Apple Developer account there is no installable iOS build, so
+iPhone users get the web app (`https://emu-bin-tracker.vercel.app`) and add it
+to the home screen. When you want a real iOS app: an Apple Developer account
+($99/yr) + `eas build --platform ios` + TestFlight. TestFlight builds expire
+after 90 days, but OTA updates still work inside them.
+
+### Free-plan limits
+
+EAS Build and EAS Update both work on the free Expo plan (low-priority builds
+and free updates, with monthly limits). If you need more builds or more
+monthly active users on updates, the Starter plan is $19/month.
+
 ## Data model
 
 - `user`, `session`, `account`, `verification` — Better Auth core schema; `user.leaderboard_opt_in` stores leaderboard consent

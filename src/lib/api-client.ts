@@ -4,6 +4,7 @@ import Constants from 'expo-constants';
 
 import { resolveApiBase } from '@/lib/api-base';
 import { authClient } from '@/lib/auth-client';
+import { APP_WEB_URL } from '@/lib/constants';
 
 /**
  * Typed fetch wrapper for the app's own API routes.
@@ -17,7 +18,10 @@ import { authClient } from '@/lib/auth-client';
  */
 const BASE = resolveApiBase({
   platform: Platform.OS,
-  apiUrl: process.env.EXPO_PUBLIC_API_URL,
+  // `APP_WEB_URL` is the fallback so an over-the-air update that was bundled
+  // without `EXPO_PUBLIC_API_URL` still talks to the deployed API instead of
+  // the phone itself (`http://localhost:8081`).
+  apiUrl: process.env.EXPO_PUBLIC_API_URL ?? APP_WEB_URL,
   hostUri: Constants.expoConfig?.hostUri,
 });
 
