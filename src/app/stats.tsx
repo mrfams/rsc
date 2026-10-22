@@ -151,7 +151,10 @@ export default function StatsScreen() {
       <View style={styles.cardHeaderRow}>
         <Text style={styles.sectionTitle}>Bins on campus</Text>
         <Text style={styles.cardMeta}>
-          {totalBins} mapped · {totalContributors} contributor{totalContributors === 1 ? '' : 's'}
+          {totalBins} mapped
+          {totalContributors > 0
+            ? ` · ${totalContributors} contributor${totalContributors === 1 ? '' : 's'}`
+            : ''}
         </Text>
       </View>
 
