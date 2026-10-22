@@ -7,6 +7,7 @@ import { eq, inArray, sql } from 'drizzle-orm';
 import { db } from './db';
 import * as authSchema from './db/auth-schema';
 import { bins, reports } from './db/schema';
+import { deletePhotos } from './photo-storage';
 
 const dev = process.env.NODE_ENV !== 'production';
 
@@ -29,8 +30,9 @@ export function isAdminUser(user: { email: string; role?: string | null } | null
   return user.role === 'admin' || isAdminEmail(user.email);
 }
 
-/* Bin ids touched by an account deletion, used to rebuild their aggregates. */
-const binsForDeletion = new Map<string, string[]>();
+/* Bins and photos touched by an account deletion, captured before the cascade. */
+type AccountDeletion = { binIds: string[]; photoPaths: string[] };
+const deletions = new Map<string, AccountDeletion>();
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
@@ -42,15 +44,25 @@ export const auth = betterAuth({
       enabled: true,
       beforeDelete: async (deletedUser) => {
         const rows = await db
-          .select({ binId: reports.binId })
+          .select({ binId: reports.binId, photoPath: reports.photoPath })
           .from(reports)
           .where(eq(reports.userId, deletedUser.id));
-        binsForDeletion.set(deletedUser.id, [...new Set(rows.map((row) => row.binId))]);
+        deletions.set(deletedUser.id, {
+          binIds: [...new Set(rows.map((row) => row.binId))],
+          photoPaths: rows.map((row) => row.photoPath).filter((value): value is string => Boolean(value)),
+        });
       },
       afterDelete: async (deletedUser) => {
-        const affected = binsForDeletion.get(deletedUser.id) ?? [];
-        binsForDeletion.delete(deletedUser.id);
-        if (affected.length === 0) return;
+        const touched = deletions.get(deletedUser.id) ?? { binIds: [], photoPaths: [] };
+        deletions.delete(deletedUser.id);
+
+        // The reports were removed by the foreign-key cascade. Their photos
+        // are not in the database anymore, so remove the stored objects too.
+        if (touched.photoPaths.length > 0) {
+          await deletePhotos(touched.photoPaths);
+        }
+
+        if (touched.binIds.length === 0) return;
         try {
           await db
             .update(bins)
@@ -63,7 +75,7 @@ export const auth = betterAuth({
               end`,
               updatedAt: new Date(),
             })
-            .where(inArray(bins.id, affected));
+            .where(inArray(bins.id, touched.binIds));
         } catch (error) {
           // The account is already gone; leave the map usable and log the gap.
           console.error('Could not rebuild bin aggregates after account deletion', error);

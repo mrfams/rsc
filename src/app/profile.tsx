@@ -27,9 +27,14 @@ import { api } from '@/lib/api-client';
 import { authClient, useSession } from '@/lib/auth-client';
 import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
 import { displayNote } from '@/lib/notes';
+import { siteMetadata } from '@/lib/site-metadata';
 import { RADIUS, SHADOW, initials, timeAgo } from '@/lib/theme';
 import { useMe } from '@/lib/use-me';
 import { categoryEmoji } from '@/lib/validation';
+
+export function generateMetadata() {
+  return siteMetadata({ title: 'Your profile', path: '/profile', noIndex: true });
+}
 
 type MyReport = {
   id: string;

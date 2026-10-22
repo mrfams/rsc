@@ -22,8 +22,13 @@ import { useSession } from '@/lib/auth-client';
 import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
 import { displayNote } from '@/lib/notes';
 import { registerPushToken } from '@/lib/register-push';
+import { siteMetadata } from '@/lib/site-metadata';
 import { RADIUS, SHADOW, STATUS_META, timeAgo, type StatusKey } from '@/lib/theme';
 import { categoryEmoji } from '@/lib/validation';
+
+export function generateMetadata() {
+  return siteMetadata({ title: 'Sighting alerts', path: '/alerts', noIndex: true });
+}
 
 type MyReport = {
   id: string;

@@ -23,8 +23,18 @@ import { Notice } from '@/components/ui/Notice';
 import { useFeedback } from '@/components/ui/Feedback';
 import { api } from '@/lib/api-client';
 import { ANDROID_DOWNLOAD_URL, APP_WEB_URL, COLORS } from '@/lib/constants';
+import { siteMetadata } from '@/lib/site-metadata';
 import { RADIUS, SHADOW } from '@/lib/theme';
 import { useAppUpdate } from '@/lib/updates';
+
+export function generateMetadata() {
+  return siteMetadata({
+    title: 'Get the app',
+    path: '/download',
+    description:
+      'Install the free EMU Bin Tracker Android app, or open the web app on iPhone. No app store needed.',
+  });
+}
 
 export default function DownloadScreen() {
   const { toast } = useFeedback();

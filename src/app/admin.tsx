@@ -35,9 +35,14 @@ import { Segmented } from '@/components/ui/Segmented';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { api } from '@/lib/api-client';
 import { CAMPUS_CENTER, CAMPUS_POLYGONS, COLORS } from '@/lib/constants';
+import { siteMetadata } from '@/lib/site-metadata';
 import { RADIUS, SHADOW, STATUS_META, initials, timeAgo } from '@/lib/theme';
 import { useMe } from '@/lib/use-me';
 import { BIN_STATUS_LABEL, categoryEmoji, type BinStatus } from '@/lib/validation';
+
+export function generateMetadata() {
+  return siteMetadata({ title: 'Admin', path: '/admin', noIndex: true });
+}
 
 type Tab = 'overview' | 'map' | 'bins' | 'types' | 'people' | 'geofence';
 

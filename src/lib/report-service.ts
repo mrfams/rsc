@@ -9,7 +9,7 @@ import { haversine, placeNameFor } from '@/lib/geo';
 import { isReportableCategory } from '@/lib/categories';
 import { bins, reports, user, type BinCategory, type BinStatus } from '@/lib/db/schema';
 import { POINT_RULES, type ContributionStats, type PublicLeaderboard } from '@/lib/points';
-import { storePhoto } from '@/lib/photo-storage';
+import { deletePhoto, storePhoto } from '@/lib/photo-storage';
 import { sendToUsers } from '@/lib/push';
 import type { ReportInput } from '@/lib/validation';
 
@@ -488,17 +488,29 @@ export async function updateBinDetails(
   return updated[0] ? mapBin(updated[0]) : null;
 }
 
-/** Moderation: remove a bad report; keeps the bin count >= 0. */
+/** Moderation: remove a bad report; keeps the bin count >= 0 and deletes its photo. */
 export async function deleteReport(reportId: string): Promise<boolean> {
   const deleted = await db
     .delete(reports)
     .where(eq(reports.id, reportId))
-    .returning({ binId: reports.binId });
+    .returning({ binId: reports.binId, photoPath: reports.photoPath });
   if (deleted.length === 0) return false;
+
   await db
     .update(bins)
     .set({ reportCount: sql`greatest(${bins.reportCount} - 1, 0)`, updatedAt: new Date() })
     .where(eq(bins.id, deleted[0].binId));
+
+  // The report is already gone from the database. A storage hiccup must not
+  // turn a successful moderation action into an error the admin sees.
+  if (deleted[0].photoPath) {
+    try {
+      await deletePhoto(deleted[0].photoPath);
+    } catch (error) {
+      console.error('[photos] report photo cleanup failed:', error);
+    }
+  }
+
   return true;
 }
 

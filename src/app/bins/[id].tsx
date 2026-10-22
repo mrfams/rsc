@@ -1,10 +1,22 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import type { GenerateMetadataFunction } from 'expo-router/server';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BinDetails } from '@/components/bins/BinDetails';
 import { COLORS } from '@/lib/constants';
+import { siteMetadata } from '@/lib/site-metadata';
 import { RADIUS, SHADOW } from '@/lib/theme';
+
+export const generateMetadata: GenerateMetadataFunction = (_request, params) => {
+  const id = Array.isArray(params.id) ? params.id[0] : params.id;
+  return siteMetadata({
+    title: 'Recycling bin',
+    path: `/bins/${id}`,
+    description:
+      'See this recycling bin on the EMU campus map, including its type, status, photos, and recent community sightings.',
+  });
+};
 
 export default function BinDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();

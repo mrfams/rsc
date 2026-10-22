@@ -24,8 +24,13 @@ import { StatusPill } from '@/components/ui/StatusPill';
 import { api } from '@/lib/api-client';
 import { useSession } from '@/lib/auth-client';
 import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
+import { siteMetadata } from '@/lib/site-metadata';
 import { RADIUS, SHADOW, timeAgo } from '@/lib/theme';
 import { categoryEmoji } from '@/lib/validation';
+
+export function generateMetadata() {
+  return siteMetadata({ title: 'Review queue', path: '/review', noIndex: true });
+}
 
 type BinDto = {
   id: string;

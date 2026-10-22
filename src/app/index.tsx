@@ -37,8 +37,17 @@ import {
 import { haversine, isInsideCampus } from '@/lib/geo';
 import { drainQueue, queueCount } from '@/lib/offline';
 import type { BinDto } from '@/lib/report-service';
+import { siteMetadata } from '@/lib/site-metadata';
 import { RADIUS, SHADOW } from '@/lib/theme';
 import { useHydrated } from '@/lib/use-hydrated';
+
+export function generateMetadata() {
+  return siteMetadata({
+    path: '/',
+    description:
+      'Find recycling bins across the EMU campus, add a sighting with a photo, and help keep the community map up to date.',
+  });
+}
 
 type AppConfig = {
   campusPolygons?: { latitude: number; longitude: number }[][];

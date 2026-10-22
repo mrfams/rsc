@@ -13,8 +13,13 @@ import { StatusPill } from '@/components/ui/StatusPill';
 import { api } from '@/lib/api-client';
 import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
 import { displayNote } from '@/lib/notes';
+import { siteMetadata } from '@/lib/site-metadata';
 import { RADIUS, timeAgo } from '@/lib/theme';
 import { categoryEmoji } from '@/lib/validation';
+
+export function generateMetadata() {
+  return siteMetadata({ title: 'Sighting details', path: '/report', noIndex: true });
+}
 
 type ReportDetail = {
   id: string;

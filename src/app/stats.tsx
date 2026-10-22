@@ -26,10 +26,20 @@ import { useSession } from '@/lib/auth-client';
 import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
 import { POINT_RULES, type ContributionStats } from '@/lib/points';
 import { registerPushToken } from '@/lib/register-push';
+import { siteMetadata } from '@/lib/site-metadata';
 import { RADIUS, SHADOW, timeAgo } from '@/lib/theme';
 import { useHydrated } from '@/lib/use-hydrated';
 import { useMe } from '@/lib/use-me';
 import { categoryEmoji } from '@/lib/validation';
+
+export function generateMetadata() {
+  return siteMetadata({
+    title: 'Campus recycling stats',
+    path: '/stats',
+    description:
+      'See how many recycling bins the EMU community has mapped, which bin types are most common, and who is leading the campus leaderboard.',
+  });
+}
 
 type BinDto = {
   id: string;

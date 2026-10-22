@@ -7,9 +7,15 @@ import { AppShell } from '@/components/AppChrome';
 import { BrandMark } from '@/components/ui/BrandMark';
 import { FeedbackProvider } from '@/components/ui/Feedback';
 import { COLORS } from '@/lib/constants';
+import { siteMetadata } from '@/lib/site-metadata';
 import { useHydrated } from '@/lib/use-hydrated';
 
 export const queryClient = new QueryClient();
+
+/** Site-wide fallback for routes that do not provide their own metadata. */
+export function generateMetadata() {
+  return siteMetadata();
+}
 
 /**
  * The app is rendered to HTML on the server. Anything that depends on the

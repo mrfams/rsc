@@ -12,7 +12,7 @@
  *     function has a read-only filesystem, so photos are refused with a clear
  *     message instead of a bare 500.
  */
-import { put } from '@vercel/blob';
+import { del, put } from '@vercel/blob';
 import { AwsClient } from 'aws4fetch';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -66,16 +66,19 @@ export function photoStorageLabel(): string {
   }
 }
 
-/** Signed PUT to an R2 bucket. Returns the public URL of the object. */
-async function putToR2(config: R2Config, key: string, bytes: Buffer): Promise<string> {
-  const client = new AwsClient({
+function r2Client(config: R2Config): AwsClient {
+  return new AwsClient({
     accessKeyId: config.accessKeyId,
     secretAccessKey: config.secretAccessKey,
     service: 's3',
     // R2 ignores the region but still requires one in the signature scope.
     region: 'auto',
   });
+}
 
+/** Signed PUT to an R2 bucket. Returns the public URL of the object. */
+async function putToR2(config: R2Config, key: string, bytes: Buffer): Promise<string> {
+  const client = r2Client(config);
   const url = `https://${config.accountId}.r2.cloudflarestorage.com/${config.bucket}/${key}`;
   const response = await client.fetch(url, {
     method: 'PUT',
@@ -143,4 +146,93 @@ export async function storePhoto(base64: string): Promise<string> {
 
   const key = `bins/photos/${crypto.randomUUID()}.jpg`;
   return storePhotoBytes(bytes, key);
+}
+
+/** Extract the object key from a public R2 URL, or null for anything else. */
+function r2KeyFor(config: R2Config, photoPath: string): string | null {
+  const prefix = `${config.publicBase}/`;
+  if (!photoPath.startsWith(prefix)) return null;
+  return photoPath.slice(prefix.length).replace(/[?#].*$/, '');
+}
+
+async function deleteFromR2(config: R2Config, key: string): Promise<void> {
+  if (!key || key.includes('..') || key.startsWith('/')) {
+    throw new Error('Refusing to delete an invalid R2 key');
+  }
+
+  const client = r2Client(config);
+  const url = `https://${config.accountId}.r2.cloudflarestorage.com/${config.bucket}/${key}`;
+  const response = await client.fetch(url, { method: 'DELETE' });
+  // R2 returns 204 for an object that is already gone.
+  if (!response.ok && response.status !== 404) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`R2 delete failed (${response.status}): ${detail.slice(0, 200)}`);
+  }
+}
+
+/**
+ * Delete the stored object behind a report photo.
+ *
+ * The database stores an absolute URL for R2/Blob and a key for local disk, so
+ * this accepts all three forms. It is deliberately best-effort: moderation must
+ * still succeed when storage is temporarily unavailable.
+ */
+export async function deletePhoto(photoPath: string): Promise<boolean> {
+  if (!photoPath) return false;
+
+  const config = r2Config();
+  if (config) {
+    const r2Key = r2KeyFor(config, photoPath);
+    if (r2Key) {
+      await deleteFromR2(config, r2Key);
+      return true;
+    }
+  }
+
+  if (photoPath.startsWith('http')) {
+    let host: string;
+    try {
+      host = new URL(photoPath).hostname;
+    } catch {
+      return false;
+    }
+
+    // Vercel Blob public URLs are the only other remote URLs this app writes.
+    if (host.endsWith('.blob.vercel-storage.com')) {
+      await del(photoPath);
+      return true;
+    }
+    return false;
+  }
+
+  const isLocalPath =
+    photoPath.startsWith('/api/photos/') ||
+    photoPath.startsWith('bins/photos/') ||
+    /^[0-9a-f-]+\.jpe?g$/i.test(photoPath);
+  if (!isLocalPath) return false;
+
+  const file = path.basename(
+    photoPath.startsWith('/api/photos/')
+      ? photoPath.slice('/api/photos/'.length)
+      : photoPath,
+  );
+  try {
+    await fs.unlink(path.join(process.cwd(), '.data', 'uploads', file));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  return true;
+}
+
+/** Delete several report photos without letting one failure block the rest. */
+export async function deletePhotos(
+  photoPaths: (string | null | undefined)[],
+): Promise<void> {
+  const unique = [...new Set(photoPaths.filter((value): value is string => Boolean(value)))];
+  const results = await Promise.allSettled(unique.map((photoPath) => deletePhoto(photoPath)));
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      console.error('[photos] cleanup failed:', result.reason);
+    }
+  }
 }

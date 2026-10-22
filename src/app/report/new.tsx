@@ -31,8 +31,13 @@ import { CAMPUS_POLYGONS, COLORS } from '@/lib/constants';
 import { isInsideCampus, placeNameFor } from '@/lib/geo';
 import { enqueueReport } from '@/lib/offline';
 import { preparePhoto } from '@/lib/photo-client';
+import { siteMetadata } from '@/lib/site-metadata';
 import { RADIUS, SHADOW } from '@/lib/theme';
 import type { ReportInput } from '@/lib/validation';
+
+export function generateMetadata() {
+  return siteMetadata({ title: 'Add a sighting', path: '/report/new', noIndex: true });
+}
 
 type AppConfig = {
   campusPolygons?: { latitude: number; longitude: number }[][];
