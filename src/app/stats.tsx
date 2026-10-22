@@ -1,14 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Image } from 'expo-image';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
-  KeyboardAvoidingView,
-  Modal,
   Pressable,
-  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -18,32 +14,30 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { BrandMark } from '@/components/ui/BrandMark';
+import { LeaderboardCard } from '@/components/LeaderboardCard';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { useFeedback } from '@/components/ui/Feedback';
-import { Field } from '@/components/ui/Field';
 import { Notice } from '@/components/ui/Notice';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SocialLinks } from '@/components/ui/SocialLinks';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { api } from '@/lib/api-client';
-import { authClient, useSession } from '@/lib/auth-client';
+import { useSession } from '@/lib/auth-client';
 import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
-import { displayNote } from '@/lib/notes';
-import { POINT_RULES } from '@/lib/points';
+import { POINT_RULES, type ContributionStats } from '@/lib/points';
 import { registerPushToken } from '@/lib/register-push';
-import { initials, RADIUS, SHADOW, timeAgo } from '@/lib/theme';
+import { RADIUS, SHADOW, timeAgo } from '@/lib/theme';
 import { useHydrated } from '@/lib/use-hydrated';
 import { useMe } from '@/lib/use-me';
 import { categoryEmoji } from '@/lib/validation';
 
-type MyReport = {
+type BinDto = {
   id: string;
-  note: string | null;
-  photoUrl: string | null;
-  createdAt: string;
-  bin: { id: string; category: string; name: string | null; status: string };
+  category: string;
+  name: string | null;
+  status: string;
+  reportCount: number;
+  updatedAt: string;
 };
 
 type Config = {
@@ -51,54 +45,34 @@ type Config = {
 };
 
 const LAST_RANK_KEY = 'rsc.last-leaderboard-rank';
+/** How many bins the public list shows before it stops. */
+const BIN_LIST_LIMIT = 25;
 
+/**
+ * The community stats page.
+ *
+ * This is a public page: guests see the leaderboard, the bins on campus and
+ * how points work without signing in. Everything that belongs to one member
+ * (their sightings, their account) lives on the Profile tab.
+ */
 export default function StatsScreen() {
   const router = useRouter();
-  const queryClient = useQueryClient();
-  const { toast } = useFeedback();
   const { width } = useWindowDimensions();
   const hydrated = useHydrated();
-  const desktop = hydrated && Platform.OS === 'web' && width >= 1024;
-  const { data: session, isPending, refetch: refetchSession } = useSession();
-  const { data: me, refetch: refetchMe } = useMe();
+  const desktop = hydrated && width >= 1024;
+  const { data: session } = useSession();
+  const { data: me } = useMe();
   const [refreshing, setRefreshing] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [rankNotice, setRankNotice] = useState<string | null>(null);
-  const [leaderboardPromptDismissed, setLeaderboardPromptDismissed] = useState(false);
-  const [accountModal, setAccountModal] = useState<'edit' | 'delete' | null>(null);
-  const [nameDraft, setNameDraft] = useState('');
-  const [passwordDraft, setPasswordDraft] = useState('');
-  const [accountError, setAccountError] = useState<string | null>(null);
-  const [accountBusy, setAccountBusy] = useState(false);
-
-  const shareOnLeaderboard = useMutation({
-    mutationFn: () =>
-      api('/api/me', { method: 'PATCH', json: { leaderboardOptIn: true } }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['me'] });
-      queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
-      toast({
-        tone: 'success',
-        title: 'Thanks — you’re on the leaderboard',
-        message: 'Your name and points now appear in the top 10.',
-      });
-    },
-    onError: (error) =>
-      toast({ tone: 'error', title: 'Could not join the leaderboard', message: error.message }),
-  });
+  const signedIn = Boolean(session?.user);
 
   useEffect(() => {
     if (session?.user) void registerPushToken();
   }, [session?.user]);
 
-  const {
-    data: reports,
-    refetch: refetchReports,
-    isLoading,
-  } = useQuery({
-    queryKey: ['my-reports'],
-    queryFn: () => api<{ reports: MyReport[] }>('/api/reports?mine=1'),
-    enabled: Boolean(session?.user),
+  const { data: bins, isLoading: binsLoading, refetch: refetchBins } = useQuery({
+    queryKey: ['bins'],
+    queryFn: () => api<BinDto[]>('/api/bins'),
   });
 
   const { data: config } = useQuery({
@@ -113,8 +87,6 @@ export default function StatsScreen() {
       name: slug.replace(/_/g, ' '),
       color: CATEGORY_COLORS[slug] ?? COLORS.primary,
       emoji: categoryEmoji(slug),
-      slug,
-      active: true,
     };
 
   const rank = me?.stats?.rank ?? null;
@@ -135,7 +107,7 @@ export default function StatsScreen() {
         if (!cancelled && Number.isFinite(previous) && previous > rank) {
           const moved = previous - rank;
           setRankNotice(
-            `You moved up ${moved} place${moved === 1 ? '' : 's'} — now #${rank} of ${totalContributors} contributors.`,
+            `You moved up ${moved} place${moved === 1 ? '' : 's'} — now #${rank} of ${totalContributors} contributors. Keep going!`,
           );
         }
         if (!cancelled) await AsyncStorage.setItem(LAST_RANK_KEY, String(rank));
@@ -150,327 +122,12 @@ export default function StatsScreen() {
 
   async function refresh() {
     setRefreshing(true);
-    await Promise.all([refetchReports(), refetchMe()]);
+    await refetchBins();
     setRefreshing(false);
   }
 
-  async function signOut() {
-    await authClient.signOut();
-    router.replace('/');
-  }
-
-  function openEditAccount() {
-    setNameDraft(session?.user?.name ?? '');
-    setAccountError(null);
-    setAccountModal('edit');
-  }
-
-  function openDeleteAccount() {
-    setPasswordDraft('');
-    setAccountError(null);
-    setAccountModal('delete');
-  }
-
-  async function saveName() {
-    const name = nameDraft.trim();
-    if (!name) {
-      setAccountError('Enter a name first.');
-      return;
-    }
-    setAccountBusy(true);
-    setAccountError(null);
-    try {
-      const { error } = await authClient.updateUser({ name });
-      if (error) {
-        setAccountError(error.message ?? 'Could not update your name.');
-        return;
-      }
-      await refetchSession();
-      queryClient.invalidateQueries({ queryKey: ['me'] });
-      setAccountModal(null);
-      toast({
-        tone: 'success',
-        title: 'Profile updated',
-        message: 'Thanks — your new name is live.',
-      });
-    } catch (error) {
-      setAccountError(error instanceof Error ? error.message : 'Could not update your name.');
-    } finally {
-      setAccountBusy(false);
-    }
-  }
-
-  async function deleteAccount() {
-    if (!passwordDraft) {
-      setAccountError('Enter your password to delete the account.');
-      return;
-    }
-    setAccountBusy(true);
-    setAccountError(null);
-    try {
-      const { error } = await authClient.deleteUser({ password: passwordDraft });
-      if (error) {
-        setAccountError(
-          error.message?.toLowerCase().includes('session')
-            ? 'Your session is too old. Sign in again, then delete the account.'
-            : error.message ?? 'Could not delete your account.',
-        );
-        return;
-      }
-      queryClient.clear();
-      router.replace('/');
-    } catch (error) {
-      setAccountError(error instanceof Error ? error.message : 'Could not delete your account.');
-    } finally {
-      setAccountBusy(false);
-    }
-  }
-
-  if (isPending) {
-    return (
-      <SafeAreaView style={styles.safe}>
-        <PageHeader title="Stats" subtitle="Loading your points…" />
-      </SafeAreaView>
-    );
-  }
-
-  if (!session?.user) {
-    return (
-      <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
-        <ScrollView contentContainerStyle={styles.guestScroll}>
-          <View style={styles.guestCard}>
-            <View style={styles.guestMark}>
-              <BrandMark size={74} radius={24} />
-            </View>
-            <Text style={styles.guestTitle}>Track your impact</Text>
-            <Text style={styles.guestText}>
-              Sign in to add bins, confirm sightings and earn points. Every contribution moves
-              you up the campus leaderboard.
-            </Text>
-            <View style={styles.guestActions}>
-              <Button
-                title="Sign in"
-                icon="log-in-outline"
-                onPress={() => router.push('/sign-in')}
-                style={{ flex: 1 }}
-              />
-              <Button
-                title="Create account"
-                variant="secondary"
-                icon="person-add-outline"
-                onPress={() => router.push({ pathname: '/sign-in', params: { mode: 'signup' } })}
-                style={{ flex: 1 }}
-              />
-            </View>
-            <View style={styles.guestFeatures}>
-              <GuestFeature icon="map-outline" text="See every bin on campus" />
-              <GuestFeature icon="cloud-offline-outline" text="Add bins offline, sync later" />
-              <GuestFeature icon="trophy-outline" text="Earn points and climb the leaderboard" />
-            </View>
-          </View>
-          <View style={styles.guestSocial}>
-            <SocialLinks label="Follow or contact us" />
-          </View>
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
-  const stats = me?.stats;
-  const points = stats?.points ?? 0;
-  const pointsToNextRank = stats?.pointsToNextRank ?? null;
-  const leaderboard = stats?.leaderboard ?? [];
-  const list = reports?.reports ?? [];
-
-  const rankHint = !me?.leaderboardOptIn
-    ? 'Your points are private. Allow your name below to join the leaderboard.'
-    : rank === 1
-      ? `Top of the leaderboard among ${totalContributors} sharing ${totalContributors === 1 ? 'member' : 'members'}.`
-      : rank
-        ? `#${rank} of ${totalContributors} sharing ${totalContributors === 1 ? 'member' : 'members'} · ${pointsToNextRank ?? 0} points to reach #${rank - 1}.`
-        : totalContributors > 0
-          ? `Earn ${pointsToNextRank ?? POINT_RULES.newBin} points to enter the leaderboard.`
-          : 'Add the first bin and take the top spot.';
-
-  const hero = (
-    <View style={styles.heroCard}>
-      <View style={styles.heroBlob} />
-      <View style={styles.heroTop}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{initials(session.user.name)}</Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          <View style={styles.nameRow}>
-            <Text style={styles.name} numberOfLines={1}>
-              {session.user.name || 'Member'}
-            </Text>
-            {me?.isAdmin ? (
-              <View style={styles.adminBadge}>
-                <Ionicons name="shield-checkmark" size={11} color={COLORS.primary} />
-                <Text style={styles.adminBadgeText}>Admin</Text>
-              </View>
-            ) : null}
-          </View>
-          <Text style={styles.email} numberOfLines={1}>
-            {session.user.email}
-          </Text>
-        </View>
-        <Pressable
-          onPress={() => void signOut()}
-          accessibilityRole="button"
-          accessibilityLabel="Sign out"
-          style={({ pressed }) => [styles.signOutIcon, pressed && { opacity: 0.7 }]}
-        >
-          <Ionicons name="log-out-outline" size={19} color={COLORS.text} />
-        </Pressable>
-      </View>
-
-      <View style={styles.pointsBlock}>
-        <View style={styles.pointsTop}>
-          <View>
-            <Text style={styles.pointsLabel}>Your points</Text>
-            <Text style={styles.pointsValue}>{points.toLocaleString()}</Text>
-          </View>
-          <View style={styles.rankBadge}>
-            <Ionicons name="trophy" size={13} color="#FFFFFF" />
-            <Text style={styles.rankBadgeText}>
-              {!me?.leaderboardOptIn ? 'Private' : rank ? `#${rank}` : 'Unranked'}
-            </Text>
-          </View>
-        </View>
-        <Text style={styles.pointsHint}>{rankHint}</Text>
-      </View>
-
-      <View style={styles.stats}>
-        <StatTile value={String(points)} label="Points" icon="sparkles-outline" />
-        <StatTile
-          value={String(stats?.binsContributed ?? 0)}
-          label="Bins found"
-          icon="trash-outline"
-        />
-        <StatTile
-          value={String(stats?.reportsCount ?? 0)}
-          label="Sightings"
-          icon="eye-outline"
-        />
-      </View>
-
-      {me?.isAdmin ? (
-        <Pressable
-          onPress={() => router.push('/admin')}
-          style={({ pressed }) => [styles.adminRow, pressed && { opacity: 0.8 }]}
-        >
-          <View style={styles.adminRowIcon}>
-            <Ionicons name="shield-checkmark-outline" size={18} color={COLORS.primary} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.adminRowTitle}>Admin workspace</Text>
-            <Text style={styles.adminRowSub}>Moderate bins, types, people and the geofence.</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={17} color={COLORS.textMuted} />
-        </Pressable>
-      ) : null}
-    </View>
-  );
-
-  const reportsColumn = (
-    <View style={styles.reportsColumn}>
-      <View style={styles.sectionHeader}>
-        <View>
-          <Text style={styles.sectionTitle}>My sightings</Text>
-          <Text style={styles.sectionSub}>{list.length} logged · newest first</Text>
-        </View>
-        <Button
-          title="Add a bin"
-          icon="add"
-          size="sm"
-          onPress={() => router.push('/report/new')}
-        />
-      </View>
-
-      {notice ? <Notice tone="success" message={notice} onDismiss={() => setNotice(null)} /> : null}
-
-      {!isLoading && list.length === 0 ? (
-        <EmptyState
-          icon="trash-outline"
-          title="No bins yet"
-          message="Spot a recycling bin on campus? Add it in under a minute and earn your first points."
-          actionLabel="Add the first bin"
-          onAction={() => router.push('/report/new')}
-        />
-      ) : null}
-
-      {list.map((report) => {
-        const cat = categoryOf(report.bin.category);
-        return (
-          <Pressable
-            key={report.id}
-            onPress={() => router.push(`/report/${report.id}`)}
-            style={({ pressed }) => [styles.reportCard, pressed && { opacity: 0.82 }]}
-          >
-            {report.photoUrl ? (
-              <Image source={{ uri: report.photoUrl }} style={styles.thumb} contentFit="cover" />
-            ) : (
-              <View style={[styles.thumb, styles.thumbEmpty, { backgroundColor: `${cat.color}14` }]}>
-                <Text style={{ fontSize: 22 }}>{cat.emoji}</Text>
-              </View>
-            )}
-            <View style={{ flex: 1, gap: 5 }}>
-              <View style={styles.reportTop}>
-                <Text style={styles.reportTitle} numberOfLines={1}>
-                  {report.bin.name?.trim() || `${cat.name} bin`}
-                </Text>
-                <StatusPill status={report.bin.status} compact />
-              </View>
-              <Text style={styles.reportNote} numberOfLines={1}>
-                {cat.emoji} {cat.name} · {displayNote(report.note) ?? 'No note added'}
-              </Text>
-              <Text style={styles.reportDate}>{timeAgo(report.createdAt)}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
-          </Pressable>
-        );
-      })}
-
-      <View style={styles.socialFooter}>
-        <SocialLinks label="Follow or contact us" />
-      </View>
-    </View>
-  );
-
-  const leaderboardCard = (
-    <View style={styles.leaderboardCard}>
-      <View style={styles.leaderboardHeader}>
-        <Text style={styles.leaderboardTitle}>Leaderboard</Text>
-        <Text style={styles.leaderboardMeta}>
-          {totalContributors} sharing
-        </Text>
-      </View>
-      {leaderboard.length === 0 ? (
-        <Text style={styles.leaderboardEmpty}>
-          No shared ranks yet. Allow your name above to appear here.
-        </Text>
-      ) : (
-        leaderboard.map((row) => (
-          <View
-            key={`${row.rank}-${row.name}`}
-            style={[styles.leaderRow, row.isYou && styles.leaderRowYou]}
-          >
-            <Text style={[styles.leaderRank, row.rank <= 3 && styles.leaderRankTop]}>
-              {row.rank}
-            </Text>
-            <Text
-              style={[styles.leaderName, row.isYou && styles.leaderNameYou]}
-              numberOfLines={1}
-            >
-              {row.isYou ? 'You' : row.name}
-            </Text>
-            <Text style={styles.leaderPoints}>{row.points.toLocaleString()} pts</Text>
-          </View>
-        ))
-      )}
-    </View>
-  );
+  const list = (bins ?? []).slice(0, BIN_LIST_LIMIT);
+  const totalBins = bins?.length ?? 0;
 
   const pointsGuide = (
     <View style={styles.pointsGuide}>
@@ -483,51 +140,95 @@ export default function StatsScreen() {
       />
       <PointRule icon="camera-outline" label="Attach a photo" points={POINT_RULES.photo} />
       <Text style={styles.pointsGuideFoot}>
-        When you share your name, your position updates after every contribution and we alert you
-        when you move up.
+        Every contribution moves you up the campus leaderboard. Names appear there only when the
+        member allows it.
       </Text>
     </View>
   );
 
-  const accountCard = (
-    <View style={styles.accountCard}>
-      <Text style={styles.accountTitle}>Account</Text>
-      <Pressable
-        onPress={openEditAccount}
-        accessibilityRole="button"
-        style={({ pressed }) => [styles.accountRow, pressed && { opacity: 0.7 }]}
-      >
-        <View style={styles.accountRowIcon}>
-          <Ionicons name="create-outline" size={17} color={COLORS.primary} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.accountRowTitle}>Edit profile</Text>
-          <Text style={styles.accountRowSub}>Change the name shown on your sightings.</Text>
-        </View>
-        <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
-      </Pressable>
-      <Pressable
-        onPress={openDeleteAccount}
-        accessibilityRole="button"
-        style={({ pressed }) => [styles.accountRow, pressed && { opacity: 0.7 }]}
-      >
-        <View style={[styles.accountRowIcon, styles.accountRowIconDanger]}>
-          <Ionicons name="trash-outline" size={17} color={COLORS.danger} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.accountRowTitle, styles.accountRowDanger]}>Delete account</Text>
-          <Text style={styles.accountRowSub}>Permanently remove your account and sightings.</Text>
-        </View>
-        <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
-      </Pressable>
+  const binsList = (
+    <View style={styles.binsCard}>
+      <View style={styles.cardHeaderRow}>
+        <Text style={styles.sectionTitle}>Bins on campus</Text>
+        <Text style={styles.cardMeta}>
+          {totalBins} mapped · {totalContributors} contributor{totalContributors === 1 ? '' : 's'}
+        </Text>
+      </View>
+
+      {binsLoading ? (
+        <Text style={styles.muted}>Loading the campus bins…</Text>
+      ) : list.length === 0 ? (
+        <EmptyState
+          icon="trash-outline"
+          title="No bins yet"
+          message="Nobody has reported a bin yet. Be the first — it takes about 30 seconds."
+          actionLabel={signedIn ? 'Add the first bin' : 'Sign in to add one'}
+          onAction={() => router.push(signedIn ? '/report/new' : '/sign-in')}
+        />
+      ) : (
+        list.map((bin) => {
+          const cat = categoryOf(bin.category);
+          return (
+            <Pressable
+              key={bin.id}
+              onPress={() => router.push({ pathname: '/', params: { bin: bin.id } })}
+              style={({ pressed }) => [styles.binRow, pressed && { opacity: 0.75 }]}
+            >
+              <View style={[styles.binEmoji, { backgroundColor: `${cat.color}16` }]}>
+                <Text style={{ fontSize: 19 }}>{cat.emoji}</Text>
+              </View>
+              <View style={{ flex: 1, gap: 3 }}>
+                <Text style={styles.binTitle} numberOfLines={1}>
+                  {bin.name?.trim() || `${cat.name} bin`}
+                </Text>
+                <Text style={styles.binMeta}>
+                  {cat.name} · {bin.reportCount} sighting{bin.reportCount === 1 ? '' : 's'} ·{' '}
+                  {timeAgo(bin.updatedAt)}
+                </Text>
+              </View>
+              <StatusPill status={bin.status} compact />
+              <Ionicons name="chevron-forward" size={15} color={COLORS.textMuted} />
+            </Pressable>
+          );
+        })
+      )}
+    </View>
+  );
+
+  const guestCard = (
+    <View style={styles.guestCard}>
+      <View style={styles.guestMark}>
+        <Ionicons name="people-outline" size={26} color={COLORS.primary} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.guestTitle}>Join the effort</Text>
+        <Text style={styles.guestText}>
+          Sign in to add bins, confirm what you see and earn points on the campus leaderboard.
+        </Text>
+      </View>
+      <View style={styles.guestActions}>
+        <Button
+          title="Sign in"
+          icon="log-in-outline"
+          size="sm"
+          onPress={() => router.push('/sign-in')}
+        />
+        <Button
+          title="Create account"
+          variant="secondary"
+          size="sm"
+          icon="person-add-outline"
+          onPress={() => router.push({ pathname: '/sign-in', params: { mode: 'signup' } })}
+        />
+      </View>
     </View>
   );
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <PageHeader
-        title={me?.isAdmin ? 'Profile' : 'Stats'}
-        subtitle="Your points, rank and contribution to campus."
+        title="Stats"
+        subtitle="The campus leaderboard, the bins we know about and how points work."
         right={
           <Button
             title="Refresh"
@@ -545,7 +246,6 @@ export default function StatsScreen() {
       >
         <View style={[styles.layout, desktop && styles.layoutDesktop]}>
           <View style={[styles.leftColumn, desktop && styles.leftColumnDesktop]}>
-            {hero}
             {rankNotice ? (
               <Notice
                 tone="success"
@@ -553,138 +253,101 @@ export default function StatsScreen() {
                 onDismiss={() => setRankNotice(null)}
               />
             ) : null}
-            {me && !me.leaderboardOptIn && !leaderboardPromptDismissed ? (
-              <Notice
-                tone="info"
-                message="Your name is not on the leaderboard. Allow it to appear in the top 10 with your points."
-                actionLabel={shareOnLeaderboard.isPending ? 'Saving…' : 'Allow'}
-                onAction={() => shareOnLeaderboard.mutate()}
-                onDismiss={() => setLeaderboardPromptDismissed(true)}
-              />
-            ) : null}
-            {leaderboardCard}
+            <LeaderboardCard />
+            {signedIn && me?.stats ? <StandingCard stats={me.stats} /> : null}
             {pointsGuide}
-            {accountCard}
           </View>
-          <View style={{ flex: 1, minWidth: 0 }}>{reportsColumn}</View>
+          <View style={[styles.rightColumn, desktop && styles.rightColumnDesktop]}>
+            {binsList}
+            {!signedIn ? guestCard : null}
+            <View style={styles.socialFooter}>
+              <SocialLinks label="Follow or contact us" />
+            </View>
+          </View>
         </View>
       </ScrollView>
-
-      <Modal
-        visible={accountModal !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {
-          if (!accountBusy) setAccountModal(null);
-        }}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalRoot}
-        >
-          <Pressable
-            style={styles.modalBackdrop}
-            onPress={() => {
-              if (!accountBusy) setAccountModal(null);
-            }}
-            accessibilityLabel="Close dialog"
-          />
-          <View style={styles.modalCard}>
-            {accountModal === 'edit' ? (
-              <>
-                <Text style={styles.modalTitle}>Edit profile</Text>
-                <Text style={styles.modalSub}>
-                  This is the name other members see on sightings and the leaderboard.
-                </Text>
-                <Field
-                  label="Name"
-                  icon="person-outline"
-                  value={nameDraft}
-                  onChangeText={setNameDraft}
-                  autoCapitalize="words"
-                  autoComplete="name"
-                  returnKeyType="done"
-                  onSubmitEditing={() => void saveName()}
-                  editable={!accountBusy}
-                  error={accountError}
-                />
-                <View style={styles.modalActions}>
-                  <Button
-                    title="Cancel"
-                    variant="secondary"
-                    disabled={accountBusy}
-                    onPress={() => setAccountModal(null)}
-                    style={{ flex: 1 }}
-                  />
-                  <Button
-                    title="Save"
-                    loading={accountBusy}
-                    onPress={() => void saveName()}
-                    style={{ flex: 1 }}
-                  />
-                </View>
-              </>
-            ) : accountModal === 'delete' ? (
-              <>
-                <View style={styles.modalDangerIcon}>
-                  <Ionicons name="trash-outline" size={22} color={COLORS.danger} />
-                </View>
-                <Text style={styles.modalTitle}>Delete your account?</Text>
-                <Text style={styles.modalSub}>
-                  This permanently removes your profile, points and sightings. Bins you added stay
-                  on the map for everyone else. This cannot be undone.
-                </Text>
-                <Field
-                  label="Password"
-                  icon="lock-closed-outline"
-                  value={passwordDraft}
-                  onChangeText={setPasswordDraft}
-                  secureTextEntry
-                  autoComplete="current-password"
-                  returnKeyType="done"
-                  onSubmitEditing={() => void deleteAccount()}
-                  editable={!accountBusy}
-                  error={accountError}
-                />
-                <View style={styles.modalActions}>
-                  <Button
-                    title="Keep account"
-                    variant="secondary"
-                    disabled={accountBusy}
-                    onPress={() => setAccountModal(null)}
-                    style={{ flex: 1 }}
-                  />
-                  <Button
-                    title="Delete"
-                    variant="danger"
-                    loading={accountBusy}
-                    onPress={() => void deleteAccount()}
-                    style={{ flex: 1 }}
-                  />
-                </View>
-              </>
-            ) : null}
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
     </SafeAreaView>
   );
 }
 
-function StatTile({
-  value,
-  label,
-  icon,
-}: {
-  value: string;
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-}) {
+/**
+ * The signed-in member's private standing: points, rank among every
+ * contributor and exactly what the next contribution is worth.
+ */
+function StandingCard({ stats }: { stats: ContributionStats }) {
+  const hasPoints = stats.points > 0;
+  const rankLine = stats.rank
+    ? `#${stats.rank} of ${stats.totalContributors} contributor${stats.totalContributors === 1 ? '' : 's'}`
+    : 'Not ranked yet';
+  const nextLine =
+    stats.rank === 1
+      ? 'You are #1 on campus — keep it up.'
+      : stats.pointsToNextRank
+        ? `${stats.pointsToNextRank} point${stats.pointsToNextRank === 1 ? '' : 's'} to move up one place.`
+        : 'Add a bin to join the standings.';
+
   return (
-    <View style={styles.statTile}>
-      <Ionicons name={icon} size={15} color={COLORS.textMuted} />
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+    <View style={styles.standingCard}>
+      <View style={styles.standingHeader}>
+        <View style={styles.standingTitleRow}>
+          <Ionicons name="sparkles-outline" size={15} color={COLORS.primary} />
+          <Text style={styles.standingTitle}>Your standing</Text>
+        </View>
+        <View style={styles.rankPill}>
+          <Ionicons name="podium-outline" size={13} color={COLORS.primary} />
+          <Text style={styles.rankPillText}>{rankLine}</Text>
+        </View>
+      </View>
+
+      <View style={styles.standingNumbers}>
+        <View>
+          <Text style={styles.standingPoints}>{stats.points.toLocaleString()}</Text>
+          <Text style={styles.standingPointsLabel}>points</Text>
+        </View>
+        <View style={styles.standingDivider} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.standingNext}>{nextLine}</Text>
+          <Text style={styles.standingMeta}>
+            {stats.binsContributed} bin{stats.binsContributed === 1 ? '' : 's'} ·{' '}
+            {stats.reportsCount} sighting{stats.reportsCount === 1 ? '' : 's'}
+            {hasPoints ? '' : ' so far'}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.standingBreakdown}>
+        <MiniStat
+          label="New bins"
+          value={stats.breakdown.newBins}
+          points={stats.breakdown.newBins * POINT_RULES.newBin}
+        />
+        <MiniStat
+          label="Confirmations"
+          value={stats.breakdown.confirmations}
+          points={stats.breakdown.confirmations * POINT_RULES.confirmation}
+        />
+        <MiniStat
+          label="Photos"
+          value={stats.breakdown.photos}
+          points={stats.breakdown.photos * POINT_RULES.photo}
+        />
+      </View>
+
+      {!stats.leaderboardOptIn ? (
+        <Text style={styles.standingPrivate}>
+          Your points and rank are private. Allow the leaderboard above to show your name publicly.
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+function MiniStat({ label, value, points }: { label: string; value: number; points: number }) {
+  return (
+    <View style={styles.miniStat}>
+      <Text style={styles.miniStatValue}>{value}</Text>
+      <Text style={styles.miniStatLabel}>{label}</Text>
+      <Text style={styles.miniStatPoints}>+{points} pts</Text>
     </View>
   );
 }
@@ -709,164 +372,86 @@ function PointRule({
   );
 }
 
-function GuestFeature({
-  icon,
-  text,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  text: string;
-}) {
-  return (
-    <View style={styles.guestFeature}>
-      <Ionicons name={icon} size={17} color={COLORS.primary} />
-      <Text style={styles.guestFeatureText}>{text}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
-  scroll: { padding: 20, paddingBottom: 40 },
+  scroll: { padding: 20, paddingBottom: 120 },
   layout: { width: '100%', maxWidth: 1120, alignSelf: 'center', gap: 18 },
   layoutDesktop: { flexDirection: 'row', alignItems: 'flex-start' },
   leftColumn: { width: '100%', gap: 14 },
   leftColumnDesktop: { width: 370 },
+  rightColumn: { width: '100%', gap: 14, flex: 1 },
+  rightColumnDesktop: { minWidth: 0 },
 
-  heroCard: {
-    backgroundColor: COLORS.primary,
-    borderRadius: RADIUS.xl,
-    padding: 22,
-    gap: 18,
-    overflow: 'hidden',
-    ...SHADOW.md,
-  },
-  heroBlob: {
-    position: 'absolute',
-    width: 240,
-    height: 240,
-    borderRadius: 120,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    top: -110,
-    right: -90,
-  },
-  heroTop: { flexDirection: 'row', alignItems: 'center', gap: 13 },
-  avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.42)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: { fontSize: 19, fontWeight: '800', color: '#FFFFFF' },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 7, flexWrap: 'wrap' },
-  name: { fontSize: 20, fontWeight: '800', color: '#FFFFFF', letterSpacing: -0.5, flexShrink: 1 },
-  adminBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 999,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-  },
-  adminBadgeText: { fontSize: 10, fontWeight: '800', color: COLORS.primary },
-  email: { fontSize: 12.5, color: 'rgba(255,255,255,0.72)', marginTop: 2 },
-  signOutIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.14)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  pointsBlock: { gap: 8 },
-  pointsTop: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  pointsLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.6,
-    color: 'rgba(255,255,255,0.68)',
-    textTransform: 'uppercase',
-  },
-  pointsValue: {
-    fontSize: 40,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    letterSpacing: -1.4,
-    lineHeight: 44,
-  },
-  rankBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.32)',
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginBottom: 4,
-  },
-  rankBadgeText: { fontSize: 12.5, fontWeight: '800', color: '#FFFFFF' },
-  pointsHint: { fontSize: 12, lineHeight: 17, color: 'rgba(255,255,255,0.78)' },
-
-  leaderboardCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.lg,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 14,
-    gap: 8,
-    ...SHADOW.sm,
-  },
-  leaderboardHeader: {
+  sectionTitle: { fontSize: 19, fontWeight: '800', color: COLORS.text, letterSpacing: -0.4 },
+  cardHeaderRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
     justifyContent: 'space-between',
     gap: 10,
   },
-  leaderboardTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: COLORS.text,
-    letterSpacing: -0.3,
+  cardMeta: { fontSize: 11.5, color: COLORS.textMuted },
+  muted: { fontSize: 12.5, color: COLORS.textMuted },
+
+  standingCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 14,
+    gap: 12,
+    ...SHADOW.sm,
   },
-  leaderboardMeta: { fontSize: 11.5, color: COLORS.textMuted },
-  leaderboardEmpty: { fontSize: 12.5, lineHeight: 18, color: COLORS.textMuted },
-  leaderRow: {
+  standingHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 10,
-    paddingVertical: 7,
-    paddingHorizontal: 8,
-    borderRadius: RADIUS.xs,
+    flexWrap: 'wrap',
   },
-  leaderRowYou: { backgroundColor: COLORS.primarySoft },
-  leaderRank: {
-    width: 22,
-    fontSize: 12.5,
+  standingTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  standingTitle: { fontSize: 16, fontWeight: '800', color: COLORS.text, letterSpacing: -0.3 },
+  rankPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.primarySoft,
+  },
+  rankPillText: { fontSize: 11, fontWeight: '800', color: COLORS.primary },
+  standingNumbers: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  standingPoints: {
+    fontSize: 32,
     fontWeight: '800',
-    color: COLORS.textMuted,
-    textAlign: 'center',
-  },
-  leaderRankTop: { color: COLORS.primary },
-  leaderName: { flex: 1, fontSize: 13, fontWeight: '600', color: COLORS.text },
-  leaderNameYou: { fontWeight: '800', color: COLORS.primaryDark },
-  leaderPoints: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: COLORS.textMuted,
+    color: COLORS.text,
+    letterSpacing: -1,
     fontVariant: ['tabular-nums'],
   },
+  standingPointsLabel: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: COLORS.textMuted,
+  },
+  standingDivider: { width: 1, alignSelf: 'stretch', backgroundColor: COLORS.border },
+  standingNext: { fontSize: 12.5, fontWeight: '700', color: COLORS.text, lineHeight: 17 },
+  standingMeta: { fontSize: 11.5, color: COLORS.textMuted, marginTop: 3 },
+  standingBreakdown: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  miniStat: {
+    flex: 1,
+    minWidth: 84,
+    padding: 9,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.surfaceAlt,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  miniStatValue: { fontSize: 16, fontWeight: '800', color: COLORS.text },
+  miniStatLabel: { fontSize: 10.5, color: COLORS.textMuted, marginTop: 1 },
+  miniStatPoints: { fontSize: 10.5, fontWeight: '700', color: COLORS.primary, marginTop: 2 },
+  standingPrivate: { fontSize: 11, lineHeight: 16, color: COLORS.textMuted },
 
   pointsGuide: {
     backgroundColor: COLORS.surface,
@@ -878,7 +463,7 @@ const styles = StyleSheet.create({
     ...SHADOW.sm,
   },
   pointsGuideTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '800',
     color: COLORS.text,
     letterSpacing: -0.3,
@@ -896,156 +481,56 @@ const styles = StyleSheet.create({
   pointRuleValue: { fontSize: 12, fontWeight: '800', color: COLORS.primary },
   pointsGuideFoot: { fontSize: 11.5, lineHeight: 16, color: COLORS.textMuted, marginTop: 2 },
 
-  accountCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.md,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    ...SHADOW.sm,
-  },
-  accountTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-    color: COLORS.textMuted,
-    textTransform: 'uppercase',
-    marginTop: 2,
-  },
-  accountRow: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 9 },
-  accountRowIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: COLORS.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  accountRowIconDanger: { backgroundColor: COLORS.dangerSoft },
-  accountRowTitle: { fontSize: 13.5, fontWeight: '800', color: COLORS.text },
-  accountRowDanger: { color: COLORS.danger },
-  accountRowSub: { fontSize: 11.5, color: COLORS.textMuted, marginTop: 1 },
-
-  modalRoot: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
-  modalBackdrop: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(15, 23, 42, 0.45)',
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 420,
+  binsCard: {
     backgroundColor: COLORS.surface,
     borderRadius: RADIUS.lg,
-    padding: 20,
-    gap: 12,
-    ...SHADOW.lg,
-  },
-  modalDangerIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: COLORS.dangerSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalTitle: { fontSize: 18, fontWeight: '800', color: COLORS.text, letterSpacing: -0.3 },
-  modalSub: { fontSize: 12.5, lineHeight: 18, color: COLORS.textMuted },
-  modalActions: { flexDirection: 'row', gap: 9, marginTop: 2 },
-
-  stats: { flexDirection: 'row', gap: 8 },
-  statTile: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    borderRadius: RADIUS.sm,
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    gap: 2,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.14)',
-  },
-  statValue: { fontSize: 18, fontWeight: '800', color: '#FFFFFF', letterSpacing: -0.4 },
-  statLabel: { fontSize: 10.5, color: 'rgba(255,255,255,0.68)', textTransform: 'uppercase', letterSpacing: 0.5 },
-
-  adminRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 11,
-    backgroundColor: '#FFFFFF',
-    borderRadius: RADIUS.md,
-    padding: 12,
-  },
-  adminRowIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 11,
-    backgroundColor: COLORS.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  adminRowTitle: { fontSize: 13.5, fontWeight: '800', color: COLORS.text },
-  adminRowSub: { fontSize: 11.5, color: COLORS.textMuted, marginTop: 1 },
-
-  reportsColumn: { gap: 12, flex: 1 },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    marginBottom: 2,
-  },
-  sectionTitle: { fontSize: 19, fontWeight: '800', color: COLORS.text, letterSpacing: -0.4 },
-  sectionSub: { fontSize: 12.5, color: COLORS.textMuted, marginTop: 2 },
-  reportCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.md,
     borderWidth: 1,
     borderColor: COLORS.border,
-    padding: 11,
+    padding: 14,
+    gap: 4,
     ...SHADOW.sm,
   },
-  thumb: { width: 58, height: 58, borderRadius: 12, backgroundColor: COLORS.surfaceAlt },
-  thumbEmpty: { alignItems: 'center', justifyContent: 'center' },
-  reportTop: { flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'space-between' },
-  reportTitle: { fontSize: 14.5, fontWeight: '700', color: COLORS.text, flex: 1 },
-  reportNote: { fontSize: 12.5, color: COLORS.textMuted },
-  reportDate: { fontSize: 11, color: COLORS.textMuted },
-  socialFooter: { marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: COLORS.border },
-
-  guestScroll: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 22, gap: 18 },
-  guestCard: {
-    width: '100%',
-    maxWidth: 480,
-    backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.xl,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 28,
+  binRow: {
+    flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    ...SHADOW.lg,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  binEmoji: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  binTitle: { fontSize: 14.5, fontWeight: '700', color: COLORS.text },
+  binMeta: { fontSize: 12, color: COLORS.textMuted },
+
+  guestCard: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 16,
+    ...SHADOW.sm,
   },
   guestMark: {
-    width: 74,
-    height: 74,
-    borderRadius: 37,
+    width: 48,
+    height: 48,
+    borderRadius: 16,
     backgroundColor: COLORS.primarySoft,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 4,
   },
-  guestTitle: { fontSize: 25, fontWeight: '800', color: COLORS.text, letterSpacing: -0.7 },
-  guestText: { fontSize: 14, lineHeight: 21, color: COLORS.textMuted, textAlign: 'center' },
-  guestActions: { flexDirection: 'row', gap: 9, width: '100%', marginTop: 6 },
-  guestFeatures: { width: '100%', gap: 10, marginTop: 14 },
-  guestFeature: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  guestFeatureText: { fontSize: 13, color: COLORS.text, fontWeight: '600' },
-  guestSocial: { alignItems: 'center' },
+  guestTitle: { fontSize: 15.5, fontWeight: '800', color: COLORS.text },
+  guestText: { fontSize: 12.5, lineHeight: 17, color: COLORS.textMuted, marginTop: 2 },
+  guestActions: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+
+  socialFooter: { marginTop: 4, paddingTop: 14, borderTopWidth: 1, borderTopColor: COLORS.border },
 });

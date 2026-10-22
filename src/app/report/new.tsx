@@ -1,6 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
@@ -31,6 +30,7 @@ import { useSession } from '@/lib/auth-client';
 import { CAMPUS_POLYGONS, COLORS } from '@/lib/constants';
 import { isInsideCampus, placeNameFor } from '@/lib/geo';
 import { enqueueReport } from '@/lib/offline';
+import { preparePhoto } from '@/lib/photo-client';
 import { RADIUS, SHADOW } from '@/lib/theme';
 import type { ReportInput } from '@/lib/validation';
 
@@ -85,6 +85,7 @@ export default function NewReportScreen() {
   const [attempted, setAttempted] = useState(false);
   const [submitted, setSubmitted] = useState<'online' | 'offline' | null>(null);
   const [newBinId, setNewBinId] = useState<string | null>(null);
+  const [photoWarning, setPhotoWarning] = useState<string | null>(null);
   const [savedName, setSavedName] = useState('');
   const [notice, setNotice] = useState<NoticeState>(null);
 
@@ -168,21 +169,13 @@ export default function NewReportScreen() {
       if (result.canceled || !result.assets[0]?.uri) return;
       const asset = result.assets[0];
 
-      // 1280px JPEG keeps uploads well under the server's 450 KB limit.
-      const context = ImageManipulator.manipulate(asset.uri).resize({ width: 1280 });
-      const image = await context.renderAsync();
-      const saved = await image.saveAsync({
-        compress: 0.7,
-        format: SaveFormat.JPEG,
-        base64: true,
+      const prepared = await preparePhoto(asset.uri);
+      setPhoto({ uri: prepared.uri, base64: prepared.base64 });
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        text: error instanceof Error ? error.message : 'Could not process that photo. Try another one.',
       });
-      if (!saved.base64) {
-        setNotice({ tone: 'error', text: 'Could not process that photo. Try another one.' });
-        return;
-      }
-      setPhoto({ uri: saved.uri, base64: `data:image/jpeg;base64,${saved.base64}` });
-    } catch {
-      setNotice({ tone: 'error', text: 'Could not process that photo. Try another one.' });
     } finally {
       setPhotoBusy(false);
     }
@@ -218,10 +211,17 @@ export default function NewReportScreen() {
     setBusy(true);
     setNotice(null);
     try {
-      const result = await api<{ binId?: string }>('/api/reports', { method: 'POST', json: body });
+      const result = await api<{ binId?: string; warning?: string | null }>('/api/reports', {
+        method: 'POST',
+        json: body,
+      });
       await queryClient.invalidateQueries({ queryKey: ['bins'] });
       await queryClient.invalidateQueries({ queryKey: ['my-reports'] });
+      // The new sighting changes points and possibly the member's rank.
+      await queryClient.invalidateQueries({ queryKey: ['me'] });
+      await queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
       setNewBinId(result?.binId ?? null);
+      setPhotoWarning(result?.warning ?? null);
       setSavedName(locationName.trim());
       setSubmitted('online');
     } catch (err) {
@@ -243,6 +243,7 @@ export default function NewReportScreen() {
   function resetDraft() {
     setSubmitted(null);
     setNewBinId(null);
+    setPhotoWarning(null);
     setPin(null);
     setPinSource(null);
     setLocationName('');
@@ -273,6 +274,12 @@ export default function NewReportScreen() {
               ? 'Thank you — your bin is queued and will upload automatically when you are back online.'
               : `Thank you — ${savedName ? `${savedName} is` : 'your bin is'} now on the campus map. Other members can confirm it as a second sighting.`}
           </Text>
+          {photoWarning ? (
+            <View style={styles.successWarning}>
+              <Ionicons name="alert-circle-outline" size={16} color={COLORS.warning} />
+              <Text style={styles.successWarningText}>{photoWarning}</Text>
+            </View>
+          ) : null}
           <Button
             title={submitted === 'online' && newBinId ? 'See it on the map' : 'Back to the map'}
             icon="map-outline"
@@ -935,4 +942,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 8,
   },
+  successWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    alignSelf: 'stretch',
+    backgroundColor: COLORS.warningSoft,
+    borderRadius: RADIUS.sm,
+    padding: 11,
+  },
+  successWarningText: { flex: 1, fontSize: 12.5, lineHeight: 17, color: COLORS.text },
 });

@@ -18,7 +18,18 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     return Response.json({ error: 'Invalid body', details: parsed.error.issues }, { status: 400 });
   }
-  const report = await createReport(user, parsed.data);
+  let report;
+  try {
+    report = await createReport(user, parsed.data);
+  } catch (error) {
+    // Validation problems are thrown as Responses and keep their status.
+    if (error instanceof Response) throw error;
+    console.error('[reports] could not create the report:', error);
+    return Response.json(
+      { error: 'The sighting could not be saved. Please try again in a moment.' },
+      { status: 500 },
+    );
+  }
   if (report == null) {
     return Response.json({ error: 'Unable to create report' }, { status: 500 });
   }

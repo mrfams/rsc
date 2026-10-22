@@ -11,8 +11,13 @@ export const reportSchema = z.object({
   /** Optional place name; the server falls back to the nearest campus place. */
   name: z.string().max(80).optional(),
   note: z.string().max(500).optional(),
-  /** data:image/jpeg;base64,… — client-compressed, ≤ ~400 KB decoded. */
-  photoBase64: z.string().max(600_000).optional(),
+  /**
+   * data:image/jpeg;base64,… — the client compresses to ≤ 900 KB, which is
+   * ~1.2 M base64 characters. The server decodes and enforces the real 1 MB
+   * byte limit in `photo-storage.ts`; this cap only rejects absurd payloads
+   * before they are decoded.
+   */
+  photoBase64: z.string().max(1_400_000).optional(),
 });
 
 export type ReportInput = z.infer<typeof reportSchema>;
@@ -43,7 +48,7 @@ export const adminBinCreateSchema = z.object({
   lng: z.number().min(-180).max(180),
   status: binStatusSchema.optional(),
   /** Optional photo of the real bin; stored as the admin's first sighting. */
-  photoBase64: z.string().max(600_000).optional(),
+  photoBase64: z.string().max(1_400_000).optional(),
 });
 
 export const adminBinUpdateSchema = z

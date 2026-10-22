@@ -226,18 +226,8 @@ export function AdminWorkspace({
           <Ionicons name="menu" size={21} color={COLORS.text} />
         </Pressable>
         <View style={{ flex: 1 }}>
-          <Text style={styles.adminEyebrow}>ADMIN WORKSPACE</Text>
           <Text style={styles.adminSectionTitle}>{current.label}</Text>
         </View>
-        <Pressable
-          onPress={() => router.navigate('/')}
-          accessibilityRole="button"
-          accessibilityLabel="Back to the campus map"
-          style={({ pressed }) => [styles.headerGhost, pressed && { opacity: 0.7 }]}
-        >
-          <Ionicons name="map-outline" size={17} color={COLORS.text} />
-          {desktop ? <Text style={styles.headerGhostText}>Map</Text> : null}
-        </Pressable>
         <View style={styles.roleBadge}>
           <Ionicons name="shield-checkmark" size={14} color={COLORS.primary} />
           <Text style={styles.roleBadgeText}>Admin</Text>
@@ -308,7 +298,7 @@ function AdminMenu({
         <View style={styles.menuHeader}>
           <BrandMark size={38} radius={12} />
           <View style={{ flex: 1 }}>
-            <Text style={styles.menuTitle}>Admin workspace</Text>
+            <Text style={styles.menuTitle}>Admin</Text>
             <Text style={styles.menuSub} numberOfLines={1}>
               {name || 'Moderator'} · {email}
             </Text>
@@ -434,10 +424,6 @@ function OverviewTab({
         />
       ) : null}
 
-      <Text style={styles.muted}>
-        Counts include bins whose type is switched on; hidden types stay visible in the Bins list.
-      </Text>
-
       <View style={styles.statsGrid}>
         <StatCard
           label="Total bins"
@@ -459,6 +445,13 @@ function OverviewTab({
           icon="checkmark-circle-outline"
           tone={COLORS.success}
           onPress={() => onOpenBins('verified')}
+        />
+        <StatCard
+          label="Reported missing"
+          value={String(disputed)}
+          icon="alert-circle-outline"
+          tone={COLORS.danger}
+          onPress={() => onOpenBins('disputed')}
         />
         <StatCard
           label="Members"
@@ -505,7 +498,7 @@ function OverviewTab({
           icon="time-outline"
           variant="secondary"
           size="sm"
-          onPress={() => onGoTab('bins')}
+          onPress={() => onOpenBins('pending')}
         />
         <Button
           title="Edit types"
@@ -2070,7 +2063,13 @@ const styles = StyleSheet.create({
   recentMeta: { fontSize: 11.5, color: COLORS.textMuted, marginTop: 1 },
 
   listHeader: { gap: 10, paddingBottom: 4 },
-  listHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  listHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
   sectionTitle: { fontSize: 20, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
   sectionSub: { fontSize: 12.5, color: COLORS.textMuted, marginTop: 2 },
   textLink: { fontSize: 13, fontWeight: '700', color: COLORS.primary },

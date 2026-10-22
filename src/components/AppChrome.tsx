@@ -48,25 +48,50 @@ type NavItem = {
   icon: keyof typeof Ionicons.glyphMap;
 };
 
-function navItems(isAdmin: boolean): NavItem[] {
-  if (isAdmin) {
+/** Tabs a signed-out visitor may open: the map and the public stats page. */
+const GUEST_ROUTES = new Set(['map', 'stats']);
+
+/**
+ * Every destination in the app, grouped by who can open it.
+ *
+ * The mobile tab bar uses a smaller slice of this list (Map, Review, Add,
+ * Profile, Admin); Stats deliberately lives in the menu/rail so the community
+ * page still exists without taking one of the four main tabs.
+ */
+function navItems(isAdmin: boolean, signedIn: boolean): NavItem[] {
+  if (!signedIn) {
     return [
       { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },
-      { key: 'review', href: '/admin/review', label: 'Review', icon: 'time-outline' },
-      { key: 'profile', href: '/stats', label: 'Profile', icon: 'person-circle-outline' },
-      { key: 'admin', href: '/admin', label: 'Admin', icon: 'shield-checkmark-outline' },
+      { key: 'stats', href: '/stats', label: 'Stats', icon: 'stats-chart-outline' },
     ];
   }
-  return [
+
+  const items: NavItem[] = [
     { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },
-    { key: 'alerts', href: '/alerts', label: 'Alerts', icon: 'notifications-outline' },
+    {
+      key: 'review',
+      href: isAdmin ? '/admin/review' : '/review',
+      label: 'Review',
+      icon: 'time-outline',
+    },
     { key: 'stats', href: '/stats', label: 'Stats', icon: 'stats-chart-outline' },
+    { key: 'profile', href: '/profile', label: 'Profile', icon: 'person-circle-outline' },
   ];
+  if (isAdmin) {
+    items.push({ key: 'admin', href: '/admin', label: 'Admin', icon: 'shield-checkmark-outline' });
+  }
+  return items;
+}
+
+/** Where a tab goes for this visitor: guests only get the map and the stats. */
+function targetFor(item: NavItem, signedIn: boolean): Href {
+  if (signedIn || GUEST_ROUTES.has(item.key)) return item.href;
+  return '/sign-in';
 }
 
 function active(pathname: string, item: NavItem): boolean {
   if (item.key === 'map') return pathname === '/' || pathname === '/map';
-  if (item.key === 'review') return pathname === '/admin/review';
+  if (item.key === 'review') return pathname === '/review' || pathname === '/admin/review';
   if (item.key === 'admin') return pathname === '/admin';
   const href = String(item.href);
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -120,7 +145,7 @@ export function DesktopSidebar() {
   const { data: me } = useMe();
   const isAdmin = me?.isAdmin === true;
   const signedIn = Boolean(session?.user);
-  const items = navItems(isAdmin);
+  const items = navItems(isAdmin, signedIn);
   const name = me?.user.name ?? session?.user?.name ?? '';
   const email = me?.user.email ?? session?.user?.email ?? '';
 
@@ -158,9 +183,7 @@ export function DesktopSidebar() {
             return (
               <Pressable
                 key={item.key}
-                onPress={() =>
-                  router.navigate(signedIn || item.key === 'map' ? item.href : '/sign-in')
-                }
+                onPress={() => router.navigate(targetFor(item, signedIn))}
                 accessibilityRole="link"
                 style={({ pressed }) => [
                   styles.railItem,
@@ -196,7 +219,7 @@ export function DesktopSidebar() {
         </Pressable>
         <SocialLinks compact label="Community" />
         <Pressable
-          onPress={() => router.navigate(session?.user ? '/stats' : '/sign-in')}
+          onPress={() => router.navigate(session?.user ? '/profile' : '/sign-in')}
           style={({ pressed }) => [styles.accountCard, pressed && { opacity: 0.8 }]}
           accessibilityRole="link"
         >
@@ -234,28 +257,38 @@ export function BottomNav() {
   const isAdmin = me?.isAdmin === true;
   const signedIn = Boolean(session?.user);
 
-  const left: NavItem[] = isAdmin
+  /*
+   * Guests get Map + Stats (the two public pages). Members get Map + Review.
+   * Add and Profile stay visible for guests but send them to sign-in, so the
+   * tab bar never changes shape between signed-out and signed-in.
+   */
+  const left: NavItem[] = signedIn
     ? [
         { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },
-        { key: 'review', href: '/admin/review', label: 'Review', icon: 'time-outline' },
+        {
+          key: 'review',
+          href: isAdmin ? '/admin/review' : '/review',
+          label: 'Review',
+          icon: 'time-outline',
+        },
       ]
     : [
         { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },
-        { key: 'alerts', href: '/alerts', label: 'Alerts', icon: 'notifications-outline' },
+        { key: 'stats', href: '/stats', label: 'Stats', icon: 'stats-chart-outline' },
       ];
   const right: NavItem[] = isAdmin
     ? [
-        { key: 'profile', href: '/stats', label: 'Profile', icon: 'person-circle-outline' },
+        { key: 'profile', href: '/profile', label: 'Profile', icon: 'person-circle-outline' },
         { key: 'admin', href: '/admin', label: 'Admin', icon: 'shield-checkmark-outline' },
       ]
-    : [{ key: 'stats', href: '/stats', label: 'Stats', icon: 'stats-chart-outline' }];
+    : [{ key: 'profile', href: '/profile', label: 'Profile', icon: 'person-circle-outline' }];
 
   const renderItem = (item: NavItem) => {
     const on = active(pathname, item);
     return (
       <Pressable
         key={item.key}
-        onPress={() => router.navigate(signedIn || item.key === 'map' ? item.href : '/sign-in')}
+        onPress={() => router.navigate(targetFor(item, signedIn))}
         accessibilityRole="link"
         accessibilityState={{ selected: on }}
         style={({ pressed }) => [styles.tab, pressed && { opacity: 0.65 }]}

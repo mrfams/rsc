@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as ImagePicker from 'expo-image-picker';
-import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as Location from 'expo-location';
 import { useRef, useState } from 'react';
 import {
@@ -32,6 +31,7 @@ import {
   type CampusPoint,
 } from '@/lib/constants';
 import { isInsideCampus, nearestCampusPlace } from '@/lib/geo';
+import { preparePhoto } from '@/lib/photo-client';
 import { RADIUS, SHADOW, timeAgo } from '@/lib/theme';
 import { BIN_STATUS_LABEL, type BinStatus } from '@/lib/validation';
 
@@ -223,13 +223,13 @@ export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) 
           ? await ImagePicker.launchCameraAsync(options)
           : await ImagePicker.launchImageLibraryAsync(options);
       if (result.canceled || !result.assets[0]?.uri) return;
-      const asset = result.assets[0];
-      const context = ImageManipulator.manipulate(asset.uri).resize({ width: 1280 });
-      const image = await context.renderAsync();
-      const saved = await image.saveAsync({ compress: 0.7, format: SaveFormat.JPEG, base64: true });
-      setPhoto({ uri: saved.uri, base64: `data:image/jpeg;base64,${saved.base64 ?? ''}` });
-    } catch {
-      setNotice({ tone: 'error', text: 'Could not process that photo. Try another one.' });
+      const prepared = await preparePhoto(result.assets[0].uri);
+      setPhoto({ uri: prepared.uri, base64: prepared.base64 });
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        text: error instanceof Error ? error.message : 'Could not process that photo. Try another one.',
+      });
     }
   }
 

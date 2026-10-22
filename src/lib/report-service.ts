@@ -4,15 +4,12 @@
 
 import { and, desc, eq, ne, sql } from 'drizzle-orm';
 
-import { put } from '@vercel/blob';
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
-
 import { db } from '@/lib/db';
 import { haversine, placeNameFor } from '@/lib/geo';
 import { isReportableCategory } from '@/lib/categories';
 import { bins, reports, user, type BinCategory, type BinStatus } from '@/lib/db/schema';
 import { POINT_RULES, type ContributionStats, type PublicLeaderboard } from '@/lib/points';
+import { storePhoto } from '@/lib/photo-storage';
 import { sendToUsers } from '@/lib/push';
 import type { ReportInput } from '@/lib/validation';
 
@@ -50,6 +47,8 @@ export type ReportDto = {
   photoUrl: string | null;
   createdAt: string;
   bin?: BinDto;
+  /** Set when something went wrong that the member should know about. */
+  warning?: string | null;
 };
 
 export type BinDetailDto = BinDto & {
@@ -170,36 +169,6 @@ async function findNearbyBin(
   return best?.id ?? null;
 }
 
-/**
- * Store an uploaded photo. On Vercel this goes to the Vercel Blob store
- * (BLOB_READ_WRITE_TOKEN); locally it falls back to ./.data/uploads so the
- * whole app works with zero external accounts.
- */
-async function storePhoto(base64: string): Promise<string> {
-  const encoded = base64.replace(/^data:image\/\w+;base64,/, '');
-  const bytes = Buffer.from(encoded, 'base64');
-  if (bytes.length === 0 || bytes.length > 450_000) {
-    throw new Response('Photo too large (max 450 KB after compression)', { status: 413 });
-  }
-  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) {
-    throw new Response('Only JPEG photos are supported', { status: 415 });
-  }
-
-  const key = `bins/photos/${crypto.randomUUID()}.jpg`;
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
-    const blob = await put(key, bytes, {
-      access: 'public',
-      contentType: 'image/jpeg',
-    });
-    return blob.url;
-  }
-
-  const dir = path.join(process.cwd(), '.data', 'uploads');
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(path.join(dir, key.replace(/^bins\/photos\//, '')), bytes);
-  return key;
-}
-
 export async function createReport(
   user: { id: string; email: string },
   input: ReportInput,
@@ -208,7 +177,24 @@ export async function createReport(
     throw new Response('Unknown or inactive category', { status: 422 });
   }
 
-  const photoPath = input.photoBase64 ? await storePhoto(input.photoBase64) : null;
+  // A photo that cannot be stored must not lose the sighting: the report is
+  // saved without it and the member is told what happened.
+  let photoPath: string | null = null;
+  let warning: string | null = null;
+  if (input.photoBase64) {
+    try {
+      photoPath = await storePhoto(input.photoBase64);
+    } catch (error) {
+      // A rejected photo must never lose the sighting. The member keeps the
+      // bin and gets a precise explanation instead of a 500/413 dead end.
+      console.error('[photos] upload failed:', error);
+      const detail = error instanceof Response ? await error.text().catch(() => '') : '';
+      warning =
+        detail.trim() ||
+        'The photo could not be saved, so this sighting was posted without it.';
+    }
+  }
+
   const suggestedName =
     input.name?.trim() || placeNameFor({ latitude: input.lat, longitude: input.lng }) || null;
 
@@ -291,6 +277,7 @@ export async function createReport(
     note: inserted.note,
     photoUrl: photoToUrl(inserted.photoPath),
     createdAt: inserted.createdAt.toISOString(),
+    warning,
   };
 }
 
@@ -422,6 +409,20 @@ export async function createBinByAdmin(
 ): Promise<BinDto | null> {
   if (!(await isReportableCategory(input.category))) return null;
 
+  // The photo is stored before the bin is written, so a photo the admin can
+  // fix (too large, not a JPEG) fails the request while nothing has been
+  // saved yet. A storage failure the admin cannot fix only costs the photo:
+  // the bin is still created.
+  let photoPath: string | null = null;
+  if (input.photoBase64) {
+    try {
+      photoPath = await storePhoto(input.photoBase64);
+    } catch (error) {
+      // The bin still gets created; only the optional photo is lost.
+      console.error('[photos] admin upload failed:', error);
+    }
+  }
+
   const inserted = await db
     .insert(bins)
     .values({
@@ -435,8 +436,7 @@ export async function createBinByAdmin(
 
   if (!inserted[0]) return null;
 
-  if (input.photoBase64) {
-    const photoPath = await storePhoto(input.photoBase64);
+  if (photoPath) {
     await db.insert(reports).values({
       binId: inserted[0].id,
       userId: user.id,
@@ -675,31 +675,35 @@ export async function getUserStats(userId: string): Promise<ContributionStats> {
     computeLeaderboard(),
     getLeaderboardOptIn(userId),
   ]);
-  // Rank and the board are both scoped to members who agreed to be public.
-  const entries = allEntries
-    .filter((entry) => entry.leaderboardOptIn)
-    .map((entry, idx) => ({ ...entry, rank: idx + 1 }));
-  const mineAll = allEntries.find((entry) => entry.userId === userId) ?? null;
-  const index = entries.findIndex((entry) => entry.userId === userId);
-  const mine = index >= 0 ? entries[index] : null;
-  const above = index > 0 ? entries[index - 1] : null;
-  const last = entries.at(-1) ?? null;
+
+  /*
+   * A member always gets a private standing, even before they agree to appear
+   * publicly. The public board is a separate, opt-in view of the same points.
+   */
+  const index = allEntries.findIndex((entry) => entry.userId === userId);
+  const mineAll = index >= 0 ? allEntries[index] : null;
+  const above = index > 0 ? allEntries[index - 1] : null;
+  const last = allEntries.at(-1) ?? null;
 
   const pointsToNextRank =
-    mine && mine.rank === 1
+    mineAll && index === 0
       ? null
-      : mine
-        ? Math.max(1, (above?.points ?? 0) - mine.points + 1)
+      : mineAll
+        ? Math.max(1, (above?.points ?? 0) - mineAll.points + 1)
         : last
           ? last.points + 1
           : POINT_RULES.newBin;
+
+  const publicEntries = allEntries
+    .filter((entry) => entry.leaderboardOptIn)
+    .map((entry, idx) => ({ ...entry, rank: idx + 1 }));
 
   return {
     reportsCount: mineAll?.reportsCount ?? 0,
     binsContributed: mineAll?.binsContributed ?? 0,
     points: mineAll?.points ?? 0,
-    rank: mine?.rank ?? null,
-    totalContributors: entries.length,
+    rank: mineAll ? index + 1 : null,
+    totalContributors: allEntries.length,
     leaderboardOptIn,
     pointsToNextRank,
     breakdown: {
@@ -707,7 +711,7 @@ export async function getUserStats(userId: string): Promise<ContributionStats> {
       confirmations: mineAll?.confirmations ?? 0,
       photos: mineAll?.photos ?? 0,
     },
-    leaderboard: leaderboardRows(entries, userId),
+    leaderboard: leaderboardRows(publicEntries, userId),
   };
 }
 
@@ -717,22 +721,15 @@ async function notifyLeaderboardClimb(userId: string, reportId: string): Promise
     computeLeaderboard(),
     computeLeaderboard(reportId),
   ]);
-  const shared = current
-    .filter((entry) => entry.leaderboardOptIn)
-    .map((entry, idx) => ({ ...entry, rank: idx + 1 }));
-  const now = shared.find((entry) => entry.userId === userId);
-  // Members who have not agreed to be public are not ranked, so no climb.
-  if (!now) return;
+  const nowIndex = current.findIndex((entry) => entry.userId === userId);
+  if (nowIndex < 0) return;
+  const beforeIndex = previous.findIndex((entry) => entry.userId === userId);
+  if (beforeIndex >= 0 && nowIndex >= beforeIndex) return;
 
-  const before = previous
-    .filter((entry) => entry.leaderboardOptIn)
-    .map((entry, idx) => ({ ...entry, rank: idx + 1 }))
-    .find((entry) => entry.userId === userId);
-  if (before && now.rank >= before.rank) return;
-
+  const now = current[nowIndex];
   await sendToUsers([userId], {
-    title: 'You moved up the leaderboard 🎉',
-    body: `You're now #${now.rank} of ${shared.length} shared ranks with ${now.points} points.`,
+    title: 'You moved up the campus standings 🎉',
+    body: `You're now #${nowIndex + 1} of ${current.length} contributors with ${now.points} points.`,
     data: { open: 'stats' },
   });
 }

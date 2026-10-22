@@ -22,25 +22,31 @@ type DrawerItem = {
   hint?: string;
 };
 
-/** Routes that stay open for guests — the map and the download page. */
-const PUBLIC_ROUTES = new Set(['/', '/download']);
+/** Routes that stay open for guests — the map, the stats page and the download page. */
+const PUBLIC_ROUTES = new Set(['/', '/stats', '/download']);
 
-function drawerItems(isAdmin: boolean): DrawerItem[] {
-  return [
+function drawerItems(isAdmin: boolean, signedIn: boolean): DrawerItem[] {
+  const items: DrawerItem[] = [
     { key: 'map', label: 'Campus map', icon: 'map-outline', href: '/', hint: 'Find and add bins' },
-    {
-      key: 'alerts',
-      label: 'My activity',
-      icon: 'notifications-outline',
-      href: '/alerts',
-      hint: 'Updates on your reports',
-    },
+  ];
+
+  if (signedIn) {
+    items.push({
+      key: 'review',
+      label: 'Review bins',
+      icon: 'time-outline',
+      href: isAdmin ? '/admin/review' : '/review',
+      hint: 'Help confirm what needs a second look',
+    });
+  }
+
+  items.push(
     {
       key: 'stats',
       label: 'Stats & leaderboard',
       icon: 'stats-chart-outline',
       href: '/stats',
-      hint: 'Points, rank and history',
+      hint: 'Campus leaderboard, points and bins',
     },
     {
       key: 'download',
@@ -49,18 +55,29 @@ function drawerItems(isAdmin: boolean): DrawerItem[] {
       href: '/download',
       hint: 'Install it on your phone',
     },
-    ...(isAdmin
-      ? [
-          {
-            key: 'admin',
-            label: 'Admin workspace',
-            icon: 'shield-checkmark-outline',
-            href: '/admin',
-            hint: 'Moderation and settings',
-          } as DrawerItem,
-        ]
-      : []),
-  ];
+  );
+
+  if (signedIn) {
+    items.push({
+      key: 'alerts',
+      label: 'My activity',
+      icon: 'notifications-outline',
+      href: '/alerts',
+      hint: 'Updates on the bins you reported',
+    });
+  }
+
+  if (isAdmin) {
+    items.push({
+      key: 'admin',
+      label: 'Admin',
+      icon: 'shield-checkmark-outline',
+      href: '/admin',
+      hint: 'Moderation and settings',
+    });
+  }
+
+  return items;
 }
 
 function isActive(pathname: string, item: DrawerItem): boolean {
@@ -89,7 +106,7 @@ export default function Sidebar({
   const signedIn = Boolean(session?.user);
   const name = me?.user.name ?? session?.user?.name ?? '';
   const email = me?.user.email ?? session?.user?.email ?? '';
-  const items = drawerItems(me?.isAdmin === true);
+  const items = drawerItems(me?.isAdmin === true, signedIn);
 
   function go(href: string) {
     onClose();
@@ -198,7 +215,7 @@ export default function Sidebar({
           {signedIn ? (
             <>
               <Pressable
-                onPress={() => go('/stats')}
+                onPress={() => go('/profile')}
                 style={({ pressed }) => [styles.account, pressed && { opacity: 0.8 }]}
                 accessibilityRole="link"
               >

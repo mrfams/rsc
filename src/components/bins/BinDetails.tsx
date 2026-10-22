@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
-import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
@@ -23,7 +22,8 @@ import { StatusPill } from '@/components/ui/StatusPill';
 import { api } from '@/lib/api-client';
 import { useSession } from '@/lib/auth-client';
 import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
-import { displayNote } from '@/lib/notes';
+import { displayArea, displayNote } from '@/lib/notes';
+import { preparePhoto } from '@/lib/photo-client';
 import { RADIUS, timeAgo } from '@/lib/theme';
 import { useMe } from '@/lib/use-me';
 import { BIN_STATUS_LABEL, binStatusEnum, categoryEmoji, type BinStatus } from '@/lib/validation';
@@ -95,6 +95,9 @@ export function BinDetails({
     queryClient.invalidateQueries({ queryKey: ['bins'] });
     queryClient.invalidateQueries({ queryKey: ['admin-bins'] });
     queryClient.invalidateQueries({ queryKey: ['my-reports'] });
+    // Points/rank changed, so the private standing and shared board are stale.
+    queryClient.invalidateQueries({ queryKey: ['me'] });
+    queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
   };
 
   const dispute = useMutation({
@@ -155,7 +158,7 @@ export function BinDetails({
    */
   const addPhoto = useMutation({
     mutationFn: (photoBase64: string) =>
-      api('/api/reports', {
+      api<{ warning?: string | null }>('/api/reports', {
         method: 'POST',
         json: {
           lat: bin?.lat,
@@ -165,8 +168,17 @@ export function BinDetails({
           photoBase64,
         },
       }),
-    onSuccess: () => {
+    onSuccess: (result) => {
       invalidate();
+      if (result?.warning) {
+        showDialog({
+          tone: 'warning',
+          title: 'Sighting added, photo not saved',
+          message: result.warning,
+          confirmLabel: 'Okay',
+        });
+        return;
+      }
       showDialog({
         tone: 'success',
         title: 'Photo added',
@@ -315,22 +327,14 @@ export function BinDetails({
           : await ImagePicker.launchImageLibraryAsync(options);
       if (result.canceled || !result.assets[0]?.uri) return;
 
-      // Same pipeline as the report form: 1280px JPEG under the 450 KB cap.
-      const context = ImageManipulator.manipulate(result.assets[0].uri).resize({ width: 1280 });
-      const image = await context.renderAsync();
-      const saved = await image.saveAsync({
-        compress: 0.7,
-        format: SaveFormat.JPEG,
-        base64: true,
+      // Same pipeline as the report form: resize/compress until it fits.
+      const prepared = await preparePhoto(result.assets[0].uri);
+      addPhoto.mutate(prepared.base64);
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        text: error instanceof Error ? error.message : 'Could not process that photo. Try another one.',
       });
-      const base64 = saved.base64 ? `data:image/jpeg;base64,${saved.base64}` : null;
-      if (!base64) {
-        setNotice({ tone: 'error', text: 'Could not process that photo. Try another one.' });
-        return;
-      }
-      addPhoto.mutate(base64);
-    } catch {
-      setNotice({ tone: 'error', text: 'Could not process that photo. Try another one.' });
     }
   }
 
@@ -434,11 +438,11 @@ export function BinDetails({
 
         <View style={styles.chipRow}>
           <StatusPill status={bin.status} />
-          {bin.area && !bin.area.startsWith('seed') ? (
+          {displayArea(bin.area) ? (
             <View style={styles.areaPill}>
               <Ionicons name="location-outline" size={12} color={COLORS.textMuted} />
               <Text style={styles.areaText} numberOfLines={1}>
-                {bin.area}
+                {displayArea(bin.area)}
               </Text>
             </View>
           ) : null}

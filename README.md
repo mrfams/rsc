@@ -10,12 +10,13 @@ and a Neon Postgres database, deployed on Vercel.
 |---|---|
 | **Map** | MapLibre on native, Leaflet on web. Correct EMU campus boundary from OpenStreetMap (relation 15583365), street/satellite basemaps (satellite is the web default), recycling-pin markers (no circles), bin-type filter chips. A campus dropdown above the type chips switches between **Main campus** and **South campus** (including the medical campus) and shows live bin counts per campus — computed from the database and counting only bin types that are switched on. Place names come from the basemap (Leaflet draws its own labels on top of the satellite imagery); the app draws bins only |
 | **Bin cards** | Tapping a bin opens a Google-Maps-style card: desktop floating right panel, mobile anchored bottom sheet (tap the handle to expand). Place name, type, photo, **“I see it too” quick verification**, Directions, “This bin is gone”, moderation and sighting history — no navigation away from the map. A member confirms a bin only once: after that the button is replaced by a “you already confirmed this bin” thank-you. When someone flags the bin, the confirmation turns into **“Report this bin”** and **“This bin is gone”** takes the prominent spot (both behind a confirm modal) |
-| **Layout** | Desktop: persistent navigation rail, floating map filters and panels. Mobile: floating tab bar with a central Add action, safe-area aware, plus a slide-in drawer with account, activity, the opt-in top-10 leaderboard and contact links. Admins get Map, Review, Add, Profile and Admin. Signed-out visitors are sent to the sign-in page from every tab, rail and drawer entry — only the map stays open |
+| **Layout** | Desktop: persistent navigation rail, floating map filters and panels. Mobile: floating tab bar with a central Add action, safe-area aware, plus a slide-in drawer with account, activity, the opt-in top-10 leaderboard and contact links. Admins get Map, Review, Add, Profile and Admin. Signed-out visitors are sent to the sign-in page from every tab, rail and drawer entry — only the map and the public Stats page stay open. The web build is installable: `public/manifest.json` and `+html.tsx` give iPhone “Add to Home Screen” a real icon and a standalone window |
 | **Feedback** | Every mutation reports back: a success dialog for meaningful actions (bin added, geofence saved, sighting verified) and a toast for lighter updates. Errors surface inline instead of failing silently |
 | **Add a bin** | Three clear steps: choose **Pick on map** (full-screen tap-to-place pin) or **Use my location**, confirm the auto-suggested place name, select the bin type from a dropdown, then add a photo and note (camera or existing photos, client-side compression, offline queue). The campus outline is a visual reference only — a bin can be added inside or outside it |
 | **Auth** | One page with **Sign in / Create account** tabs. Any email can join; no campus-domain gate. Sessions work on web and native (SecureStore cookie) |
 | **Bin lifecycle** | Reports within 25 m (same category) merge into one bin; two distinct contributors verify it; members can flag a bin missing; a new sighting restores it |
-| **Stats** | Points dashboard and leaderboard: points for new bins, confirmations and photos, live rank with points to the next place, a “how points work” guide, sighting history, admin entry point and social/contact links. Names appear on the public top 10 only after the member explicitly allows it. The server pushes a notification when a contribution moves you up. Members can **edit their display name** and **delete their account** (password confirmed) from an Account card; deleting removes the profile, points and sightings and rebuilds the aggregates of every bin they touched |
+| **Stats** | The public campus page: the opt-in top-10 leaderboard, every bin we know about and a “how points work” guide (points for new bins, confirmations and photos). Guests see it too, with a sign-in prompt in place of their own numbers. Names appear on the public top 10 only after the member explicitly allows it. The server pushes a notification when a contribution moves you up |
+| **Profile** | The member's own page: identity, every sighting they reported, and account settings. Members can **edit their display name** and **delete their account** (password confirmed) from an Account card; deleting removes the profile, points and sightings and rebuilds the aggregates of every bin they touched. Signed-out visitors are redirected to sign-in |
 | **Alerts** | Activity on your own reports with All / Awaiting / Resolved filters; tapping an alert opens the bin card on the map |
 | **Admin** | A **hamburger-driven workspace** (Overview, Map studio, Bins, Bin types, People, Geofence) plus a dedicated **Review** route for the pending queue. Map studio pins, renames, retypes, moves and removes bins directly on the map, anywhere in the world, with **Use my location** and an optional photo. Overview cards open the matching section (members, awaiting review, etc.); bin types are created, edited and deleted in a modal. Geofence editor has an explicit **Draw corners** mode (browsing never mutates the boundary), add/delete areas, a numbered corner list that highlights each point on the map before you delete it, undo, reset to the real OSM boundary, and a confirm + success dialog on save |
 | **Server** | `/api/health`, `/api/bins` (+`/[id]`, `/[id]/dispute`), `/api/reports` (+`/[id]`, `?mine=1`), `/api/me` (GET/PATCH leaderboard consent), `/api/leaderboard`, `/api/config`, `/api/photos/*`, `/api/admin/*`, `/api/auth/*` |
@@ -79,7 +80,7 @@ npm run seed              # categories, admin and starter bins inside the real c
 
 ```
 ┌─ src/app ───────── screens (Expo Router: web + native from one source)
-│   map · auth · report/new · report/[id] · bins/[id] · stats · alerts · admin
+│   map · auth · report/new · report/[id] · bins/[id] · stats · profile · alerts · admin
 ├─ src/app/api ────── server routes (+api.ts) — never bundled into the client
 ├─ src/components ── AppChrome (rail/tab bar), Sidebar, bins/BinDetails,
 │                     map/MapView.tsx (MapLibre) / MapView.web.tsx (Leaflet),
@@ -95,9 +96,10 @@ npm run seed              # categories, admin and starter bins inside the real c
   `types.ts` and the same pin/geofence behaviour.
 - **Server/client isolation.** Secrets only exist in files imported by `+api.ts`
   route handlers — Metro strips them from client bundles.
-- **Photos degrade gracefully.** With `BLOB_READ_WRITE_TOKEN` present (Vercel),
-  uploads go to Vercel Blob; without it they land in `./.data/uploads` and are
-  served locally.
+- **Photos degrade gracefully.** Uploads go to Cloudflare R2 (`R2_*`), Vercel Blob
+  (`BLOB_READ_WRITE_TOKEN`) or — in local development only — `./.data/uploads`.
+  When the store is unreachable the sighting is still posted, just without its
+  photo, and the member is told; `/api/health` reports which backend is live.
 - **Sessions.** Better Auth manages `user`/`session`/`account`/`verification`
   tables through the Drizzle adapter. Localhost and Expo dev origins are
   trusted in development; production/preview origins are derived from
@@ -111,9 +113,37 @@ npm run seed              # categories, admin and starter bins inside the real c
    - `BETTER_AUTH_URL` — production URL, e.g. `https://<project>.vercel.app`
    - `ADMIN_EMAILS` — comma-separated moderator emails (enables `/admin`)
    - `BLOB_READ_WRITE_TOKEN` — optional (photos), via Vercel Blob integration
+   - `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL` — optional (photos), via Cloudflare R2
    - `EXPO_PUBLIC_INSTAGRAM_URL`, `EXPO_PUBLIC_WHATSAPP_URL` — optional contact links
 2. **Native apps** need the deployed URL baked in: set `EXPO_PUBLIC_API_URL` to
    the production origin and build with EAS.
+
+### Photo storage (Cloudflare R2)
+
+Photos are optional, but without a bucket the app saves the sighting and drops
+the photo with a toast. To turn photos on:
+
+1. Cloudflare dashboard → **R2** → **Create bucket** (for example `rsc-photos`).
+2. Open the bucket → **Settings** → **Public access** → enable the **r2.dev**
+   subdomain (or connect a custom domain). Copy that public URL.
+3. **R2 → Manage R2 API Tokens** → create a token with **Object Read & Write**
+   for this bucket. Copy the Access Key ID and Secret Access Key.
+4. Add these to **Vercel → Project → Settings → Environment Variables** (and to
+   the EAS `production`/`preview` environments if you build there):
+
+```bash
+R2_ACCOUNT_ID=...
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET=rsc-photos
+R2_PUBLIC_URL=https://pub-xxxxxxxx.r2.dev   # no trailing slash
+```
+
+5. Redeploy, then open `/api/health` — it should report `"photos": "Cloudflare R2"`.
+   Upload a photo from the app to confirm the round trip.
+
+Vercel Blob (`BLOB_READ_WRITE_TOKEN`) works too if you prefer not to use
+Cloudflare. The app picks R2 first, then Blob, then local disk in development.
 
 ### Native map note
 
@@ -135,17 +165,17 @@ when your laptop is off.
 | Piece | What it is |
 |---|---|
 | EAS project | `@famara2ray/rscemu` (`projectId` lives in `app.json` → `extra.eas.projectId`) |
-| Build | `eas build --platform android --profile preview` → signed, installable APK |
-| Update | `eas update --channel preview --environment preview` → new JS/UI for every installed copy |
-| Install link | EAS internal-distribution URL (public by default) + QR code on `/download` |
+| Build | `npm run build:android:production` → signed, installable APK |
+| Update | `npm run update:production` → new JS/UI for every installed copy |
+| Install link | GitHub release asset (`npm run publish:apk`) + QR code on `/download` |
 
 ### Build profiles and channels (`eas.json`)
 
 | Profile | Channel | What it is for |
 |---|---|---|
 | `development` | `development` | Dev client with the dev menu — for you while coding |
-| `preview` | `preview` | Standalone APK you hand to students (has `expo-updates` inside) |
-| `production` | `production` | Same, but the channel real users follow |
+| `preview` | `preview` | Short-lived test APK, not the one students keep |
+| `production` | `production` | The APK you hand to students; every OTA update is published here |
 
 A build's **channel** decides which updates it pulls. `preview` builds listen
 to the `preview` channel, `production` builds to `production`. Publish to the
@@ -158,8 +188,12 @@ channel that matches the build your users have.
 git add -A && git commit -m "Tweak the bin card layout"
 
 # 2. ship it to every installed copy — no new APK, no store review
-npm run update:preview        # -> eas update --channel preview --environment preview --auto
+npm run update:production     # -> eas update --channel production --environment production --auto
 ```
+
+Use the `preview` channel only for a throwaway test build. An APK built with
+the `preview` profile ignores updates published to `production` (and the other
+way around), so keep the build your students install on `production`.
 
 The app checks for updates on launch, downloads the new bundle in the
 background and shows a **“New version available — Update / Restart”** banner
@@ -170,9 +204,9 @@ updates** on the `/download` page. Web builds deploy through Vercel instead —
 Roll out gradually, watch the error rate, roll back if it goes wrong:
 
 ```bash
-npx eas-cli@latest update --channel preview --environment preview --rollout-percentage 20
-npx eas-cli@latest update:republish --branch main   # roll back to the previous update
-npx eas-cli@latest channel:pause preview            # stop serving updates on a channel
+npx eas-cli@latest update --channel production --environment production --rollout-percentage 20
+npx eas-cli@latest update:republish --branch main     # roll back to the previous update
+npx eas-cli@latest channel:pause production           # stop serving updates on a channel
 ```
 
 ### What OTA can and cannot do
@@ -190,15 +224,20 @@ to everyone who already installed the app.
 ### Shipping a new APK (new native code)
 
 ```bash
-npm run build:android      # eas build --platform android --profile preview
+npm run build:android:production   # eas build --platform android --profile production
+
+# optional: download the newest production APK, attach it to a GitHub release
+# and point the stored install link at it
+npm run publish:apk
 ```
 
-Then copy the **Application Archive URL** from the build page into
-`/admin → Overview → App download link`. It is stored in `app_config`, so the
+`publish:apk` needs the EAS CLI (logged in), the GitHub CLI (`gh`) and
+`DATABASE_URL`. It writes the release URL into `app_config`, so the
 `/download` page, its QR code and the in-app button point at the new build
-immediately — no app update, no redeploy. The value is also mirrored in
-`EXPO_PUBLIC_ANDROID_DOWNLOAD_URL` (build env) and `ANDROID_DOWNLOAD_URL`
-(`src/lib/constants.ts`) as the offline fallback.
+immediately — no app update, no redeploy. You can also paste the **Application
+Archive URL** from the build page into `/admin → Overview → App download link`.
+The value is mirrored in `EXPO_PUBLIC_ANDROID_DOWNLOAD_URL` (build env) and
+`ANDROID_DOWNLOAD_URL` (`src/lib/constants.ts`) as the offline fallback.
 
 ### Environment variables for updates
 

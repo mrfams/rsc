@@ -34,8 +34,25 @@ type EasBuild = {
   artifacts?: { applicationArchiveUrl?: string; buildUrl?: string };
 };
 
+/** Windows needs the `.cmd` shim to spawn npm-installed binaries. */
+function bin(command: string): string {
+  return process.platform === 'win32' ? `${command}.cmd` : command;
+}
+
 function run(command: string, args: string[]): string {
   return execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+/**
+ * `.cmd` shims (npx) cannot be spawned directly on Windows, so those calls go
+ * through the shell. Only used for argument lists without spaces.
+ */
+function runShell(command: string, args: string[]): string {
+  return execFileSync(command, args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    shell: true,
+  });
 }
 
 /** The GitHub repository the release is published to (from the git remote). */
@@ -51,12 +68,33 @@ function repoSlug(): string {
 }
 
 async function latestAndroidBuild(): Promise<EasBuild> {
-  const raw = run('npx', ['--yes', 'eas-cli@latest', 'build:list', '--platform', 'android', '--json']);
+  const raw = runShell(bin('npx'), [
+    '--yes',
+    'eas-cli@latest',
+    'build:list',
+    '--platform',
+    'android',
+    '--json',
+  ]);
   const builds = JSON.parse(raw) as EasBuild[];
+  /*
+   * Ship a `production` build, because that is the channel OTA updates are
+   * published to. Picking a preview build here would install an APK that
+   * silently ignores every production update.
+   */
   const finished = builds
-    .filter((b) => b.status === 'FINISHED' && b.artifacts?.applicationArchiveUrl)
+    .filter(
+      (b) =>
+        b.status === 'FINISHED' &&
+        b.artifacts?.applicationArchiveUrl &&
+        b.buildProfile === 'production',
+    )
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  if (finished.length === 0) throw new Error('No finished Android build found on EAS.');
+  if (finished.length === 0) {
+    throw new Error(
+      'No finished production Android build found. Run `npm run build:android:production` first.',
+    );
+  }
   return finished[0];
 }
 
