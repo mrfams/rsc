@@ -123,6 +123,11 @@ update never talks to an older API.
 2. **Native apps** need the deployed URL baked in: set `EXPO_PUBLIC_API_URL` to
    the production origin and build with EAS.
 
+The social preview card (`public/og-image.jpg`) is generated from
+[`scripts/make-og.ps1`](./scripts/make-og.ps1). Read
+[`POSTER-MAKE.md`](./POSTER-MAKE.md) before changing its text, colours or
+dimensions.
+
 ### Photo storage (Cloudflare R2)
 
 Photos are optional, but without a bucket the app saves the sighting and drops
