@@ -7,15 +7,21 @@ export const SITE_DESCRIPTION =
   'Find recycling bins across the EMU campus, add a sighting with a photo, and see the community map and leaderboard.';
 
 /** Absolute URL: social crawlers do not resolve relative image paths. */
-export const OG_IMAGE_URL = `${APP_WEB_URL}/og-image.png`;
+export const OG_IMAGE_URL = `${APP_WEB_URL}/og-image.jpg`;
 
+/**
+ * JPEG, not PNG: WhatsApp, iMessage and some Android share sheets refuse or
+ * silently drop large/alpha PNG previews. This file is ~100 KB at 1200×630,
+ * which is inside every social crawler's size limit, and it has no alpha
+ * channel, so it renders the same on a light or dark chat background.
+ */
 const OG_IMAGE = {
   url: OG_IMAGE_URL,
   secureUrl: OG_IMAGE_URL,
   width: 1200,
   height: 630,
-  type: 'image/png',
-  alt: 'EMU Bin Tracker — a community map of recycling bins across the EMU campus',
+  type: 'image/jpeg',
+  alt: 'EMU Bin Tracker - a community map of recycling bins across the EMU campus',
 };
 
 type PageMetadataOptions = {

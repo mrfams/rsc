@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import type { GenerateMetadataFunction } from 'expo-router/server';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -17,9 +18,16 @@ import { siteMetadata } from '@/lib/site-metadata';
 import { RADIUS, timeAgo } from '@/lib/theme';
 import { categoryEmoji } from '@/lib/validation';
 
-export function generateMetadata() {
-  return siteMetadata({ title: 'Sighting details', path: '/report', noIndex: true });
-}
+export const generateMetadata: GenerateMetadataFunction = (_request, params) => {
+  const id = Array.isArray(params.id) ? params.id[0] : params.id;
+  return siteMetadata({
+    title: 'Sighting details',
+    description:
+      'A community sighting on the EMU Bin Tracker map, including the bin type, location, photo and verification status.',
+    path: `/report/${id}`,
+    noIndex: true,
+  });
+};
 
 type ReportDetail = {
   id: string;

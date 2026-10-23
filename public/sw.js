@@ -10,7 +10,7 @@
  * A service worker is required for Chrome/Android to consider the site an
  * installable PWA and show its install prompt.
  */
-const VERSION = 'rsc-v3';
+const VERSION = 'rsc-v4';
 const SHELL_CACHE = `${VERSION}-shell`;
 const DATA_CACHE = `${VERSION}-data`;
 const ASSET_CACHE = `${VERSION}-assets`;
@@ -24,6 +24,7 @@ const SHELL_URLS = [
   '/icon-192.png',
   '/icon-512.png',
   '/icon-180.png',
+  '/og-image.jpg',
   '/og-image.png',
 ];
 
