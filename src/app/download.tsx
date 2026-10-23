@@ -123,8 +123,8 @@ export default function DownloadScreen() {
           </View>
 
           <Text style={styles.body}>
-            We are not on the Play Store yet, so the app comes as a normal install file. Tap the
-            button, the download starts, then open the file to install it.
+            We are not on the Play Store yet, so the app comes as a normal APK install file. Tap the
+            button below to download it, then open the file to install it on Android.
           </Text>
 
           <Button

@@ -284,7 +284,7 @@ export const SOCIAL_LINKS = {
     'https://chat.whatsapp.com/HfmvqCAdJ629e6kG2k9x0T?s=cl&p=a&mlu=4&ilr=4',
 };
 
-/** Vertical space reserved for the floating mobile tab bar. */
+/** Vertical space reserved for the floating mobile tab bar. Uses safe area inset to adapt to different phones. */
 export const BOTTOM_NAV_HEIGHT = 78;
 
 /**

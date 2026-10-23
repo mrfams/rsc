@@ -187,7 +187,7 @@ export default function StatsScreen() {
               onPress={() => router.push({ pathname: '/', params: { bin: bin.id } })}
               style={({ pressed }) => [styles.binRow, pressed && { opacity: 0.75 }]}
             >
-              <View style={[styles.binEmoji, { backgroundColor: `${cat.color}16` }]}>
+              <View style={[styles.binEmoji, {  }]}>
                 <Text style={{ fontSize: 19 }}>{cat.emoji}</Text>
               </View>
               <View style={{ flex: 1, gap: 3 }}>
@@ -388,11 +388,11 @@ function PointRule({
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   scroll: { padding: 20, paddingBottom: 120 },
-  layout: { width: '100%', maxWidth: 1120, alignSelf: 'center', gap: 18 },
+  layout: { width: '100%', alignSelf: 'center', gap: 12 },
   layoutDesktop: { flexDirection: 'row', alignItems: 'flex-start' },
   leftColumn: { width: '100%', gap: 14 },
   leftColumnDesktop: { width: 370 },
-  rightColumn: { width: '100%', gap: 14, flex: 1 },
+  rightColumn: { width: '100%', gap: 8, flex: 1 },
   rightColumnDesktop: { minWidth: 0 },
 
   sectionTitle: { fontSize: 19, fontWeight: '800', color: COLORS.text, letterSpacing: -0.4 },
