@@ -369,7 +369,7 @@ export default function NewReportScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.sectionTitle}>Where is the bin?</Text>
                   <Text style={styles.sectionSub}>
-                    Pick the exact spot on the map, or use where you are standing.
+                    Pick the exact spot on the map.
                   </Text>
                 </View>
               </View>
@@ -400,6 +400,7 @@ export default function NewReportScreen() {
                       center={pin}
                       zoom={17.5}
                       polygons={campusPolygons}
+                      maskOutside
                       showUserLocation={false}
                       style={styles.map}
                     />
@@ -475,7 +476,6 @@ export default function NewReportScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.sectionTitle}>What kind of bin?</Text>
-                  <Text style={styles.sectionSub}>Open the list and pick the closest match.</Text>
                 </View>
               </View>
 
@@ -497,7 +497,6 @@ export default function NewReportScreen() {
                 }
                 loading={!config && !configError}
                 error={categoryError}
-                hint="This sets the pin colour and the map filter."
                 sheetTitle="Bin type"
                 label="Bin type"
               />
@@ -528,7 +527,7 @@ export default function NewReportScreen() {
                   <View style={{ flex: 1, gap: 8 }}>
                     <Text style={styles.photoTitle}>Photo added</Text>
                     <Text style={styles.photoSub}>
-                      People will see it on the map. Compressed automatically before upload.
+                      Photo helps people recognise the bin.
                     </Text>
                     <View style={styles.photoActions}>
                       <Button
@@ -568,8 +567,7 @@ export default function NewReportScreen() {
                       {photoBusy ? 'Preparing photo…' : 'Add a photo'}
                     </Text>
                     <Text style={styles.addPhotoSub}>
-                      Show people exactly what the bin looks like — take one now or choose from
-                      your photos.
+                      Add a photo of the bin.
                     </Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
@@ -685,7 +683,7 @@ function LocationOption({
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.locationOptionTitle}>{title}</Text>
-        <Text style={styles.locationOptionSub}>{subtitle}</Text>
+        <Text style={styles.locationOptionSub} />
       </View>
     </Pressable>
   );
@@ -764,15 +762,19 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.3 },
   sectionSub: { fontSize: 12.5, color: COLORS.textMuted, marginTop: 1, lineHeight: 17 },
 
-  locationOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
+  // Both choices stay on one row even on a small phone: they are equally
+  // important and a stacked pair wastes half a screen.
+  locationOptions: { flexDirection: 'row', gap: 8 },
   locationOption: {
-    flexGrow: 1,
-    flexBasis: '45%',
-    minWidth: 190,
+    flex: 1,
+    flexBasis: 0,
+    flexShrink: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 11,
-    padding: 13,
+    gap: 8,
+    paddingVertical: 11,
+    paddingHorizontal: 10,
     borderRadius: RADIUS.md,
     backgroundColor: COLORS.surface,
     borderWidth: 1.5,
@@ -780,16 +782,16 @@ const styles = StyleSheet.create({
   },
   locationOptionDone: { borderColor: COLORS.primary, backgroundColor: COLORS.primarySoft },
   locationOptionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+    width: 34,
+    height: 34,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: COLORS.primarySoft,
   },
   locationOptionIconDone: { backgroundColor: COLORS.primary },
-  locationOptionTitle: { fontSize: 14, fontWeight: '800', color: COLORS.text },
-  locationOptionSub: { fontSize: 11.5, color: COLORS.textMuted, marginTop: 1 },
+  locationOptionTitle: { fontSize: 13, fontWeight: '800', color: COLORS.text },
+  locationOptionSub: { fontSize: 10.5, lineHeight: 14, color: COLORS.textMuted, marginTop: 1 },
 
   previewCard: {
     borderRadius: RADIUS.lg,

@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
 import Constants from 'expo-constants';
@@ -27,6 +28,21 @@ const BASE = resolveApiBase({
 
 export type ApiError = Error & { status?: number };
 
+/**
+ * Last-known public data, so the map still opens with bins on a dead
+ * connection (native and browsers without the service worker). Personal and
+ * moderation endpoints are never cached.
+ */
+const CACHE_PREFIX = 'rsc.api-cache:';
+const CACHEABLE_PATHS = new Set(['/api/bins', '/api/config', '/api/leaderboard']);
+
+function cacheKeyFor(path: string): string | null {
+  const base = path.split('?')[0];
+  if (CACHEABLE_PATHS.has(base)) return `${CACHE_PREFIX}${base}`;
+  if (/^\/api\/bins\/[0-9a-f-]{16,}$/i.test(base)) return `${CACHE_PREFIX}${base}`;
+  return null;
+}
+
 export async function api<T>(
   path: string,
   init: RequestInit & { json?: unknown } = {},
@@ -43,12 +59,28 @@ export async function api<T>(
     if (cookie) finalHeaders.Cookie = cookie;
   }
 
-  const res = await fetch(`${BASE}${path}`, {
-    ...rest,
-    headers: finalHeaders,
-    body: json !== undefined ? JSON.stringify(json) : rest.body,
-    credentials: 'include',
-  });
+  const method = (rest.method ?? 'GET').toUpperCase();
+  const cacheKey = method === 'GET' ? cacheKeyFor(path) : null;
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      ...rest,
+      headers: finalHeaders,
+      body: json !== undefined ? JSON.stringify(json) : rest.body,
+      credentials: 'include',
+    });
+  } catch (error) {
+    if (cacheKey) {
+      try {
+        const cached = await AsyncStorage.getItem(cacheKey);
+        if (cached) return JSON.parse(cached) as T;
+      } catch {
+        // Corrupt cache: fall through to the network error.
+      }
+    }
+    throw error;
+  }
 
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
@@ -63,5 +95,9 @@ export async function api<T>(
     throw err;
   }
 
-  return (await res.json()) as T;
+  const data = (await res.json()) as T;
+  if (cacheKey) {
+    void AsyncStorage.setItem(cacheKey, JSON.stringify(data)).catch(() => {});
+  }
+  return data;
 }

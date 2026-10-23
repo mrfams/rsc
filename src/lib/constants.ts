@@ -300,5 +300,12 @@ export const ANDROID_DOWNLOAD_URL =
   process.env.EXPO_PUBLIC_ANDROID_DOWNLOAD_URL ??
   'https://github.com/mrfams/rsc/releases/latest/download/app.apk';
 
-/** The deployed web app — also the fallback for iOS users until TestFlight. */
-export const APP_WEB_URL = 'https://emu-bin-tracker.vercel.app';
+/**
+ * The deployed web app — also the fallback for iOS users until TestFlight and
+ * the canonical origin used by Open Graph/canonical URLs. Preview deployments
+ * can override it with EXPO_PUBLIC_APP_URL so shared links point at the right
+ * host.
+ */
+export const APP_WEB_URL = (
+  process.env.EXPO_PUBLIC_APP_URL ?? 'https://emu-bin-tracker.vercel.app'
+).replace(/\/+$/, '');

@@ -1,29 +1,31 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Image } from 'expo-image';
 import { Redirect, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
-  Modal,
+  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { BinDetails } from '@/components/bins/BinDetails';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { useFeedback } from '@/components/ui/Feedback';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Segmented } from '@/components/ui/Segmented';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { api } from '@/lib/api-client';
 import { useSession } from '@/lib/auth-client';
 import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
+import { displayNote } from '@/lib/notes';
+import type { ReviewItemDto } from '@/lib/report-service';
 import { siteMetadata } from '@/lib/site-metadata';
 import { RADIUS, SHADOW, timeAgo } from '@/lib/theme';
 import { categoryEmoji } from '@/lib/validation';
@@ -32,40 +34,37 @@ export function generateMetadata() {
   return siteMetadata({ title: 'Review queue', path: '/review', noIndex: true });
 }
 
-type BinDto = {
-  id: string;
-  category: string;
-  name: string | null;
-  area: string | null;
-  status: string;
-  reportCount: number;
-  updatedAt: string;
-};
-
 type Config = {
   categories: { slug: string; name: string; color: string; emoji: string; active: boolean }[];
 };
 
 type Filter = 'all' | 'pending' | 'disputed';
+type Choice = 'yes' | 'no' | 'unsure';
+
+type CategoryMeta = { name: string; color: string; emoji: string };
 
 /**
  * The community review queue.
  *
- * A bin needs help when it was just mapped by one person (pending) or when a
- * member reported it missing (disputed). Tapping a card opens the same bin
- * card as the map, where "I see it too" or "This bin is gone" does the work.
+ * Each card is a self-contained review: the photo, the latest note and how
+ * many people have seen the bin answer one question, and the member answers
+ * with one of three choices. Nothing is sent until Confirm is pressed, so a
+ * stray tap can never verify or remove a bin.
  */
 export default function ReviewScreen() {
   const router = useRouter();
-  const { height } = useWindowDimensions();
+  const queryClient = useQueryClient();
+  const { toast } = useFeedback();
   const { data: session, isPending } = useSession();
   const [filter, setFilter] = useState<Filter>('all');
-  const [selected, setSelected] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  /** Bins handled in this session stay out of the list until a refetch. */
+  const [handled, setHandled] = useState<Set<string>>(new Set());
 
-  const { data: bins, isLoading, refetch } = useQuery({
-    queryKey: ['bins'],
-    queryFn: () => api<BinDto[]>('/api/bins'),
+  const review = useQuery({
+    queryKey: ['review-queue'],
+    queryFn: () => api<{ items: ReviewItemDto[] }>('/api/review'),
     enabled: Boolean(session?.user),
   });
 
@@ -87,34 +86,96 @@ export default function ReviewScreen() {
     return <Redirect href="/sign-in" />;
   }
 
-  const activeSlugs = new Set(
-    (config?.categories ?? []).filter((category) => category.active).map((c) => c.slug),
-  );
   const categories = config?.categories ?? [];
-  const categoryOf = (slug: string) =>
+  const activeSlugs = new Set(
+    categories.filter((category) => category.active).map((category) => category.slug),
+  );
+  const categoryOf = (slug: string): CategoryMeta =>
     categories.find((category) => category.slug === slug) ?? {
       name: slug.replace(/_/g, ' '),
       color: CATEGORY_COLORS[slug] ?? COLORS.primary,
       emoji: categoryEmoji(slug),
     };
 
-  const queue = (bins ?? [])
-    .filter((bin) => bin.status === 'pending' || bin.status === 'disputed')
-    .filter((bin) => activeSlugs.size === 0 || activeSlugs.has(bin.category))
+  const queue = (review.data?.items ?? [])
+    .filter((item) => !handled.has(item.id))
+    .filter((item) => activeSlugs.size === 0 || activeSlugs.has(item.category))
+    .filter((item) => filter === 'all' || item.status === filter)
     .sort((a, b) => {
       // Missing bins first: they are the most urgent thing to check.
       if (a.status !== b.status) return a.status === 'disputed' ? -1 : 1;
       return b.updatedAt.localeCompare(a.updatedAt);
     });
 
-  const pending = queue.filter((bin) => bin.status === 'pending').length;
-  const disputed = queue.filter((bin) => bin.status === 'disputed').length;
-  const list = filter === 'all' ? queue : queue.filter((bin) => bin.status === filter);
+  const all = review.data?.items ?? [];
+  const pending = all.filter((item) => item.status === 'pending' && !handled.has(item.id)).length;
+  const disputed = all.filter((item) => item.status === 'disputed' && !handled.has(item.id)).length;
 
   async function refresh() {
     setRefreshing(true);
-    await refetch();
+    await review.refetch();
     setRefreshing(false);
+  }
+
+  async function decide(item: ReviewItemDto, choice: Choice) {
+    if (busyId) return;
+    setHandled((current) => new Set(current).add(item.id));
+    if (choice === 'unsure') {
+      toast({
+        tone: 'info',
+        title: 'Skipped for now',
+        message: 'No report was sent. You can review it again later.',
+      });
+      return;
+    }
+
+    setBusyId(item.id);
+    try {
+      if (choice === 'yes') {
+        await api('/api/reports', {
+          method: 'POST',
+          json: { lat: item.lat, lng: item.lng, category: item.category },
+        });
+        toast({
+          tone: 'success',
+          title: 'Sighting confirmed',
+          message: 'Thanks — an independent sighting keeps the campus map trustworthy.',
+        });
+      } else {
+        await api(`/api/bins/${item.id}/dispute`, { method: 'POST', json: {} });
+        toast({
+          tone: 'success',
+          title: 'Reported missing',
+          message: 'The bin is flagged for the campus. A new sighting puts it back.',
+        });
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['review-queue'] }),
+        queryClient.invalidateQueries({ queryKey: ['bins'] }),
+        queryClient.invalidateQueries({ queryKey: ['bin', item.id] }),
+        queryClient.invalidateQueries({ queryKey: ['me'] }),
+        queryClient.invalidateQueries({ queryKey: ['leaderboard'] }),
+      ]);
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      setHandled((current) => {
+        const next = new Set(current);
+        next.delete(item.id);
+        return next;
+      });
+      toast({
+        tone: 'error',
+        title: status === 401 ? 'Please sign in again' : 'Could not save that review',
+        message:
+          status === 401
+            ? 'Your session expired. Sign in and try once more.'
+            : error instanceof Error
+              ? error.message
+              : 'Please try again.',
+      });
+    } finally {
+      setBusyId(null);
+    }
   }
 
   return (
@@ -122,15 +183,6 @@ export default function ReviewScreen() {
       <PageHeader
         title="Review"
         subtitle="Confirm the bins you can see, and flag the ones that are gone."
-        right={
-          <Button
-            title="Refresh"
-            variant="secondary"
-            size="sm"
-            icon="refresh-outline"
-            onPress={() => void refresh()}
-          />
-        }
       />
 
       <ScrollView
@@ -159,14 +211,14 @@ export default function ReviewScreen() {
           <View style={styles.intro}>
             <Ionicons name="shield-checkmark-outline" size={17} color={COLORS.primary} />
             <Text style={styles.introText}>
-              Two independent sightings verify a bin. A quick confirmation here keeps the campus
-              map trustworthy for everyone.
+              Two independent sightings verify a bin. Look at the photo and note, choose what you
+              see, then confirm.
             </Text>
           </View>
 
           <Segmented
             items={[
-              { key: 'all' as const, label: 'All', badge: queue.length },
+              { key: 'all' as const, label: 'All', badge: pending + disputed },
               { key: 'pending' as const, label: 'New bins', badge: pending },
               { key: 'disputed' as const, label: 'Missing', badge: disputed },
             ]}
@@ -175,76 +227,209 @@ export default function ReviewScreen() {
             scrollable
           />
 
-          {isLoading ? (
-            <Text style={styles.muted}>Loading the review queue…</Text>
-          ) : list.length === 0 ? (
+          {review.isLoading ? (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator color={COLORS.primary} />
+              <Text style={styles.muted}>Loading the review queue…</Text>
+            </View>
+          ) : review.error ? (
+            <EmptyState
+              icon="cloud-offline-outline"
+              title="Could not load the queue"
+              message={
+                review.error instanceof Error
+                  ? review.error.message
+                  : 'Check your connection and try again.'
+              }
+              actionLabel="Try again"
+              onAction={() => void review.refetch()}
+            />
+          ) : queue.length === 0 ? (
             <EmptyState
               icon="checkmark-done-circle-outline"
-              title={queue.length === 0 ? 'Everything is reviewed' : 'Nothing in this view'}
+              title={handled.size > 0 ? 'Review saved' : 'Everything is reviewed'}
               message={
-                queue.length === 0
-                  ? 'There are no bins waiting for a second sighting right now. Add a bin or enjoy the map.'
-                  : 'Switch filters to see the rest of the queue.'
+                handled.size > 0
+                  ? 'Thanks for helping. There is nothing else waiting for you right now.'
+                  : 'There are no bins waiting for your second sighting. Add a bin or enjoy the map.'
               }
               actionLabel="Back to the map"
               onAction={() => router.navigate('/')}
             />
           ) : (
             <View style={styles.list}>
-              {list.map((bin) => {
-                const category = categoryOf(bin.category);
-                return (
-                  <Pressable
-                    key={bin.id}
-                    onPress={() => setSelected(bin.id)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Review ${bin.name ?? `${category.name} bin`}`}
-                    style={({ pressed }) => [styles.row, pressed && { opacity: 0.75 }]}
-                  >
-                    <View style={[styles.emoji, { backgroundColor: `${category.color}16` }]}>
-                      <Text style={{ fontSize: 22 }}>{category.emoji}</Text>
-                    </View>
-                    <View style={{ flex: 1, gap: 3 }}>
-                      <Text style={styles.rowTitle} numberOfLines={1}>
-                        {bin.name?.trim() || `${category.name} bin`}
-                      </Text>
-                      <Text style={styles.rowMeta} numberOfLines={1}>
-                        {category.name} · {bin.reportCount} sighting
-                        {bin.reportCount === 1 ? '' : 's'} · {timeAgo(bin.updatedAt)}
-                      </Text>
-                    </View>
-                    <StatusPill status={bin.status} compact />
-                    <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
-                  </Pressable>
-                );
-              })}
+              {queue.map((item) => (
+                <ReviewCard
+                  key={item.id}
+                  item={item}
+                  category={categoryOf(item.category)}
+                  busy={busyId === item.id}
+                  disabled={busyId !== null && busyId !== item.id}
+                  onOpenMap={() =>
+                    router.navigate({ pathname: '/', params: { bin: item.id } })
+                  }
+                  onDecide={(choice) => void decide(item, choice)}
+                />
+              ))}
             </View>
           )}
         </View>
       </ScrollView>
-
-      <Modal
-        visible={selected !== null}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setSelected(null)}
-        statusBarTranslucent
-      >
-        <View style={styles.modalRoot}>
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={() => setSelected(null)}
-            accessibilityRole="button"
-            accessibilityLabel="Close bin review"
-          />
-          <View style={[styles.modalPanel, { height: Math.min(height * 0.9, 820) }]}>
-            {selected ? (
-              <BinDetails binId={selected} onClose={() => setSelected(null)} variant="page" />
-            ) : null}
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
+  );
+}
+
+const CHOICES: { key: Choice; label: string; hint: string; icon: keyof typeof Ionicons.glyphMap }[] =
+  [
+    {
+      key: 'yes',
+      label: 'Yes, I can see it',
+      hint: 'The bin is here and usable',
+      icon: 'eye-outline',
+    },
+    {
+      key: 'no',
+      label: 'No, it is gone',
+      hint: 'Missing, moved or not a bin',
+      icon: 'close-circle-outline',
+    },
+    {
+      key: 'unsure',
+      label: 'Not sure',
+      hint: 'Cannot check it right now',
+      icon: 'help-circle-outline',
+    },
+  ];
+
+function ReviewCard({
+  item,
+  category,
+  busy,
+  disabled,
+  onOpenMap,
+  onDecide,
+}: {
+  item: ReviewItemDto;
+  category: CategoryMeta;
+  busy: boolean;
+  disabled: boolean;
+  onOpenMap: () => void;
+  onDecide: (choice: Choice) => void;
+}) {
+  const [choice, setChoice] = useState<Choice | null>(null);
+  const missing = item.reason === 'missing';
+  const note = displayNote(item.note);
+  const lastSeen = item.lastReportAt ?? item.updatedAt;
+
+  return (
+    <View style={styles.reviewCard}>
+      <View style={styles.cardTop}>
+        <View style={[styles.thumbWrap, { backgroundColor: `${category.color}12` }]}>
+          {item.photoUrl ? (
+            <Image source={{ uri: item.photoUrl }} style={styles.thumb} contentFit="cover" />
+          ) : (
+            <Text style={styles.thumbEmoji}>{category.emoji}</Text>
+          )}
+        </View>
+        <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+          <View style={styles.titleRow}>
+            <Text style={styles.cardTitle} numberOfLines={1}>
+              {item.name?.trim() || `${category.name} bin`}
+            </Text>
+            <StatusPill status={item.status} compact />
+          </View>
+          <Text style={styles.cardMeta} numberOfLines={1}>
+            {category.emoji} {category.name} · {item.reportCount} sighting
+            {item.reportCount === 1 ? '' : 's'}
+          </Text>
+          <Text style={styles.cardMeta} numberOfLines={1}>
+            <Ionicons name="location-outline" size={11} color={COLORS.textMuted} />{' '}
+            {item.area?.trim() || `${item.lat.toFixed(4)}, ${item.lng.toFixed(4)}`}
+          </Text>
+          <Text style={styles.cardTime}>
+            {missing ? 'Flagged missing' : 'Added'} {timeAgo(item.updatedAt)} · last sighting{' '}
+            {timeAgo(lastSeen)}
+          </Text>
+        </View>
+        <Pressable
+          onPress={onOpenMap}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Open this bin on the map"
+          style={({ pressed }) => [styles.mapLink, pressed && { opacity: 0.6 }]}
+        >
+          <Ionicons name="map-outline" size={18} color={COLORS.primary} />
+        </Pressable>
+      </View>
+
+      {note ? (
+        <View style={styles.noteCard}>
+          <Ionicons name="chatbubble-ellipses-outline" size={14} color={COLORS.textMuted} />
+          <Text style={styles.noteText} numberOfLines={2}>
+            “{note}”
+          </Text>
+        </View>
+      ) : null}
+
+      <View style={styles.questionBlock}>
+        <Text style={styles.question}>
+          {missing ? 'Is this bin still here?' : 'Is this bin really at this spot?'}
+        </Text>
+        <Text style={styles.questionHint}>
+          {missing
+            ? 'Check the spot before answering — a new sighting restores it.'
+            : 'Look at the photo and the place, then pick one answer.'}
+        </Text>
+
+        <View style={styles.options}>
+          {CHOICES.map((option) => {
+            const selected = choice === option.key;
+            const tone =
+              option.key === 'yes'
+                ? COLORS.success
+                : option.key === 'no'
+                  ? COLORS.danger
+                  : COLORS.textMuted;
+            return (
+              <Pressable
+                key={option.key}
+                onPress={() => setChoice(option.key)}
+                disabled={busy || disabled}
+                accessibilityRole="radio"
+                accessibilityState={{ selected, disabled }}
+                accessibilityLabel={`${option.label}. ${option.hint}`}
+                style={({ pressed }) => [
+                  styles.option,
+                  selected && { borderColor: tone, backgroundColor: `${tone}0F` },
+                  pressed && { opacity: 0.8 },
+                ]}
+              >
+                <View style={[styles.radio, selected && { borderColor: tone }]}>
+                  {selected ? <View style={[styles.radioDot, { backgroundColor: tone }]} /> : null}
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={[styles.optionLabel, selected && { color: tone }]}>
+                    {option.label}
+                  </Text>
+                  <Text style={styles.optionHint}>{option.hint}</Text>
+                </View>
+                <Ionicons name={option.icon} size={16} color={selected ? tone : COLORS.textMuted} />
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
+      <Button
+        title={busy ? 'Saving…' : 'Confirm'}
+        icon="checkmark"
+        loading={busy}
+        disabled={!choice || busy || disabled}
+        onPress={() => {
+          if (choice) onDecide(choice);
+        }}
+      />
+    </View>
   );
 }
 
@@ -276,50 +461,81 @@ const styles = StyleSheet.create({
   },
   introText: { flex: 1, fontSize: 12.5, lineHeight: 18, color: COLORS.text },
 
+  loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12 },
   muted: { fontSize: 12.5, color: COLORS.textMuted },
-  list: {
+  list: { gap: 12 },
+
+  reviewCard: {
     backgroundColor: COLORS.surface,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
     borderColor: COLORS.border,
-    paddingHorizontal: 14,
+    padding: 14,
+    gap: 11,
     ...SHADOW.sm,
   },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 11,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: COLORS.border,
-  },
-  emoji: {
-    width: 44,
-    height: 44,
+  cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 11 },
+  thumbWrap: {
+    width: 74,
+    height: 74,
     borderRadius: 13,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  rowTitle: { fontSize: 14.5, fontWeight: '700', color: COLORS.text },
-  rowMeta: { fontSize: 12, color: COLORS.textMuted },
-
-  modalRoot: {
-    flex: 1,
-    justifyContent: 'flex-end',
+  thumb: { width: '100%', height: '100%' },
+  thumbEmoji: { fontSize: 28 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  cardTitle: { flex: 1, fontSize: 15.5, fontWeight: '800', color: COLORS.text, letterSpacing: -0.3 },
+  cardMeta: { fontSize: 12, color: COLORS.textMuted, lineHeight: 16 },
+  cardTime: { fontSize: 11, color: COLORS.textMuted },
+  mapLink: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
-    backgroundColor: 'rgba(9, 14, 12, 0.45)',
+    justifyContent: 'center',
+    backgroundColor: COLORS.primarySoft,
   },
-  modalPanel: {
-    width: '100%',
-    maxWidth: 760,
-    height: '90%',
-    overflow: 'hidden',
-    backgroundColor: COLORS.surface,
-    borderTopLeftRadius: RADIUS.xl,
-    borderTopRightRadius: RADIUS.xl,
+
+  noteCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.surfaceAlt,
     borderWidth: 1,
-    borderBottomWidth: 0,
     borderColor: COLORS.border,
-    ...SHADOW.lg,
   },
+  noteText: { flex: 1, fontSize: 12.5, lineHeight: 17, color: COLORS.text, fontStyle: 'italic' },
+
+  questionBlock: { gap: 4 },
+  question: { fontSize: 15, fontWeight: '800', color: COLORS.text, letterSpacing: -0.3 },
+  questionHint: { fontSize: 12, lineHeight: 16, color: COLORS.textMuted },
+  options: { gap: 7, marginTop: 6 },
+  option: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 11,
+    borderRadius: RADIUS.sm,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+  },
+  radio: {
+    width: 19,
+    height: 19,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioDot: { width: 9, height: 9, borderRadius: 5 },
+  optionLabel: { fontSize: 13, fontWeight: '800', color: COLORS.text },
+  optionHint: { fontSize: 11, color: COLORS.textMuted, marginTop: 1 },
 });

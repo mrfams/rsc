@@ -30,6 +30,8 @@ export type MapViewProps = {
   polygons?: MapPolygon[];
   /** Dim everything outside the polygon. */
   maskOutside?: boolean;
+  /** Campus place labels (faculties, library, dorms). Defaults to true. */
+  showPlaceLabels?: boolean;
   /** Basemap style; honoured on web (Leaflet) and native (MapLibre). */
   basemap?: 'streets' | 'satellite';
   /** Fit the viewport to the polygon (used by the geofence editor). */

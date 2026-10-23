@@ -59,8 +59,9 @@ type Config = {
 };
 
 /**
- * The card is focused on the bin itself for now. Flip this back on to restore
- * the per-sighting list (and the admin delete controls that live inside it).
+ * The public card stays focused on the bin itself. Admins always see the
+ * sighting history because the photo takedown and report-removal controls
+ * live inside it.
  */
 const SHOW_SIGHTING_HISTORY = false;
 
@@ -225,6 +226,20 @@ export function BinDetails({
     onError: (err) => setNotice({ tone: 'error', text: err.message }),
   });
 
+  const removePhoto = useMutation({
+    mutationFn: (reportId: string) =>
+      api(`/api/admin/reports/${reportId}/photo`, { method: 'DELETE' }),
+    onSuccess: () => {
+      invalidate();
+      toast({
+        tone: 'success',
+        title: 'Photo taken down',
+        message: 'The sighting stays, but its photo is gone from the public map.',
+      });
+    },
+    onError: (err) => setNotice({ tone: 'error', text: err.message }),
+  });
+
   if (isLoading) {
     return (
       <View style={styles.center}>
@@ -260,6 +275,7 @@ export function BinDetails({
   const isAdmin = me?.isAdmin === true;
   const signedIn = Boolean(session?.user);
   const removed = bin.status === 'removed';
+  const showHistory = SHOW_SIGHTING_HISTORY || isAdmin;
   const alreadySighted = bin.hasSighted === true;
   const statusKey: StatusKey =
     bin.status === 'verified' || bin.status === 'disputed' || bin.status === 'removed'
@@ -563,7 +579,7 @@ export function BinDetails({
           </View>
         ) : null}
 
-        {SHOW_SIGHTING_HISTORY ? (
+        {showHistory ? (
           <>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Sighting history</Text>
@@ -598,23 +614,48 @@ export function BinDetails({
                     </Text>
                   </View>
                   {isAdmin ? (
-                    <Pressable
-                      onPress={() =>
-                        confirm({
-                          tone: 'warning',
-                          title: 'Delete this sighting?',
-                          message: 'The report is removed permanently. The bin stays on the map.',
-                          confirmLabel: 'Delete',
-                          destructive: true,
-                          onConfirm: () => deleteReport.mutate(report.id),
-                        })
-                      }
-                      hitSlop={8}
-                      accessibilityLabel="Delete report"
-                      style={({ pressed }) => [styles.delete, pressed && { opacity: 0.5 }]}
-                    >
-                      <Ionicons name="trash-outline" size={16} color={COLORS.danger} />
-                    </Pressable>
+                    <View style={styles.reportActions}>
+                      {report.photoUrl ? (
+                        <Pressable
+                          onPress={() =>
+                            confirm({
+                              tone: 'warning',
+                              title: 'Take down this photo?',
+                              message:
+                                'The photo is removed everywhere. The sighting stays counted, and the rest of the bin card is unchanged.',
+                              confirmLabel: 'Take down',
+                              destructive: true,
+                              onConfirm: () => removePhoto.mutate(report.id),
+                            })
+                          }
+                          disabled={removePhoto.isPending}
+                          hitSlop={8}
+                          accessibilityLabel="Take down this photo"
+                          style={({ pressed }) => [styles.delete, pressed && { opacity: 0.5 }]}
+                        >
+                          <Ionicons name="eye-off-outline" size={17} color={COLORS.warning} />
+                        </Pressable>
+                      ) : null}
+                      <Pressable
+                        onPress={() =>
+                          confirm({
+                            tone: 'warning',
+                            title: 'Delete this sighting?',
+                            message:
+                              'The report and its photo are removed permanently. The bin stays on the map.',
+                            confirmLabel: 'Delete',
+                            destructive: true,
+                            onConfirm: () => deleteReport.mutate(report.id),
+                          })
+                        }
+                        disabled={deleteReport.isPending}
+                        hitSlop={8}
+                        accessibilityLabel="Delete report"
+                        style={({ pressed }) => [styles.delete, pressed && { opacity: 0.5 }]}
+                      >
+                        <Ionicons name="trash-outline" size={16} color={COLORS.danger} />
+                      </Pressable>
+                    </View>
                   ) : null}
                 </View>
               ))
@@ -864,5 +905,6 @@ const styles = StyleSheet.create({
   thumbEmpty: { alignItems: 'center', justifyContent: 'center' },
   reportNote: { fontSize: 13.5, fontWeight: '600', color: COLORS.text },
   reportMeta: { fontSize: 11.5, color: COLORS.textMuted },
+  reportActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   delete: { padding: 6 },
 });

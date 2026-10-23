@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { AppShell } from '@/components/AppChrome';
+import { LeaderboardNotice } from '@/components/LeaderboardNotice';
 import { BrandMark } from '@/components/ui/BrandMark';
 import { FeedbackProvider } from '@/components/ui/Feedback';
 import { COLORS } from '@/lib/constants';
@@ -32,6 +33,7 @@ export default function RootLayout() {
         <StatusBar style="dark" />
         {hydrated ? (
           <AppShell>
+            <LeaderboardNotice />
             <Stack screenOptions={{ headerShown: false, animation: 'default' }}>
               <Stack.Screen name="index" />
               <Stack.Screen name="sign-in" options={{ presentation: 'modal' }} />

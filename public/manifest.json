@@ -1,7 +1,11 @@
 {
+  "id": "/",
   "short_name": "EMU Bins",
   "name": "EMU Bin Tracker",
   "description": "Community map of recycling bins on the EMU campus.",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["utilities", "education", "navigation"],
   "icons": [
     {
       "src": "/icon-192.png",
@@ -25,7 +29,32 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
   "orientation": "portrait",
   "theme_color": "#0E7C5A",
-  "background_color": "#F3F5F4"
+  "background_color": "#F3F5F4",
+  "prefer_related_applications": false,
+  "shortcuts": [
+    {
+      "name": "Campus map",
+      "short_name": "Map",
+      "description": "Find recycling bins on campus",
+      "url": "/",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Add a bin",
+      "short_name": "Add",
+      "description": "Report a recycling bin in under a minute",
+      "url": "/report/new",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Campus stats",
+      "short_name": "Stats",
+      "description": "See the leaderboard and campus totals",
+      "url": "/stats",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
 }

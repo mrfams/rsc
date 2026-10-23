@@ -150,6 +150,7 @@ function PickerSession({ initial, polygons = CAMPUS_POLYGONS, onClose, onConfirm
         center={center}
         zoom={17}
         polygons={polygons}
+        maskOutside
         showUserLocation={showUserDot}
         onPressMap={(latitude, longitude) => {
           setDraft({ latitude, longitude });

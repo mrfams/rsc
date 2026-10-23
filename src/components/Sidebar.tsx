@@ -35,7 +35,7 @@ function drawerItems(isAdmin: boolean, signedIn: boolean): DrawerItem[] {
       key: 'review',
       label: 'Review bins',
       icon: 'time-outline',
-      href: isAdmin ? '/admin/review' : '/review',
+      href: '/review',
       hint: 'Help confirm what needs a second look',
     });
   }

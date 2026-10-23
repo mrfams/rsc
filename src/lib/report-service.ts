@@ -2,7 +2,7 @@
  * Server-side service layer for bins and reports.
  */
 
-import { and, desc, eq, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 
 import { db } from '@/lib/db';
 import { haversine, placeNameFor } from '@/lib/geo';
@@ -55,6 +55,17 @@ export type BinDetailDto = BinDto & {
   reports: ReportDto[];
   /** True when the signed-in viewer already sighted this bin. */
   hasSighted?: boolean;
+};
+
+/** One actionable card in the community review queue. */
+export type ReviewItemDto = BinDto & {
+  /** Most recent photo attached to any sighting of this bin. */
+  photoUrl: string | null;
+  /** Most recent human note, so the reviewer knows what to look for. */
+  note: string | null;
+  lastReportAt: string | null;
+  /** Why it needs a review: freshly mapped or reported missing. */
+  reason: 'new' | 'missing';
 };
 
 function photoToUrl(photoPath: string | null): string | null {
@@ -136,6 +147,59 @@ export async function listBins(): Promise<BinDto[]> {
     .orderBy(desc(bins.createdAt));
 
   return rows.map(mapBin);
+}
+
+/**
+ * Review queue for one member.
+ *
+ * A member can only verify a bin they have not seen themselves — an
+ * independent second sighting is what turns a pending bin into a verified
+ * one. This also prevents duplicate points from self-confirmation.
+ */
+export async function listReviewQueue(viewerId: string): Promise<ReviewItemDto[]> {
+  const rows = await db
+    .select(sqlBins)
+    .from(bins)
+    .where(sql`${bins.status} in ('pending', 'disputed')`)
+    .orderBy(desc(bins.updatedAt))
+    .limit(100);
+  if (rows.length === 0) return [];
+
+  const ids = rows.map((row) => row.id);
+  const sightingRows = await db
+    .select({
+      binId: reports.binId,
+      userId: reports.userId,
+      note: reports.note,
+      photoPath: reports.photoPath,
+      createdAt: reports.createdAt,
+    })
+    .from(reports)
+    .where(inArray(reports.binId, ids))
+    .orderBy(desc(reports.createdAt));
+
+  const mine = new Set(
+    sightingRows.filter((row) => row.userId === viewerId).map((row) => row.binId),
+  );
+  const latest = new Map<string, (typeof sightingRows)[number]>();
+  const latestPhoto = new Map<string, string>();
+  for (const row of sightingRows) {
+    if (!latest.has(row.binId)) latest.set(row.binId, row);
+    if (row.photoPath && !latestPhoto.has(row.binId)) latestPhoto.set(row.binId, row.photoPath);
+  }
+
+  return rows
+    .filter((row) => !mine.has(row.id))
+    .map((row) => {
+      const report = latest.get(row.id);
+      return {
+        ...mapBin(row),
+        photoUrl: photoToUrl(latestPhoto.get(row.id) ?? null),
+        note: report?.note ?? null,
+        lastReportAt: report ? report.createdAt.toISOString() : null,
+        reason: row.status === 'disputed' ? ('missing' as const) : ('new' as const),
+      };
+    });
 }
 
 /** Admin-only: every bin including removed ones, for moderation. */
@@ -246,6 +310,24 @@ export async function createReport(
     .where(eq(bins.id, binId));
 
   await refreshBinStatusFromWave(binId);
+
+  // Best-effort: the first contribution puts the member on the public board,
+  // so tell them and let them hide themselves from the in-app notice.
+  try {
+    const [{ n }] = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(reports)
+      .where(eq(reports.userId, user.id));
+    if (Number(n) === 1 && (await getLeaderboardOptIn(user.id))) {
+      await sendToUsers([user.id], {
+        title: "You're on the campus leaderboard 🎉",
+        body: 'Your name and points are now public. Open Stats to hide yourself at any time.',
+        data: { open: 'stats' },
+      });
+    }
+  } catch {
+    // leaderboard notifications are best-effort
+  }
 
   // Best-effort: tell the contributor when this action moves them up.
   try {
@@ -488,6 +570,38 @@ export async function updateBinDetails(
   return updated[0] ? mapBin(updated[0]) : null;
 }
 
+/**
+ * Moderation: take down only the photo attached to a sighting.
+ *
+ * The sighting itself stays (it still counts as a confirmation), the stored
+ * object is removed, and a storage hiccup never fails the moderation action.
+ */
+export async function removeReportPhoto(
+  reportId: string,
+): Promise<'removed' | 'no-photo' | 'not-found'> {
+  const [row] = await db
+    .select({ photoPath: reports.photoPath, binId: reports.binId })
+    .from(reports)
+    .where(eq(reports.id, reportId))
+    .limit(1);
+  if (!row) return 'not-found';
+  if (!row.photoPath) return 'no-photo';
+
+  await db
+    .update(reports)
+    .set({ photoPath: null })
+    .where(eq(reports.id, reportId));
+
+  try {
+    await deletePhoto(row.photoPath);
+  } catch (error) {
+    console.error('[photos] takedown cleanup failed:', error);
+  }
+
+  await db.update(bins).set({ updatedAt: new Date() }).where(eq(bins.id, row.binId));
+  return 'removed';
+}
+
 /** Moderation: remove a bad report; keeps the bin count >= 0 and deletes its photo. */
 export async function deleteReport(reportId: string): Promise<boolean> {
   const deleted = await db
@@ -561,7 +675,9 @@ async function computeLeaderboard(excludeReportId?: string): Promise<Contributio
     })
     .from(reports)
     .innerJoin(user, eq(reports.userId, user.id))
-    .where(excludeReportId ? ne(reports.id, excludeReportId) : undefined);
+    // Suspended accounts keep their contribution history on bins, but they
+    // are not ranked and never appear on the public leaderboard.
+    .where(and(isNull(user.disabledAt), excludeReportId ? ne(reports.id, excludeReportId) : undefined));
 
   // The earliest report on a bin is the one that put it on the map.
   const firstByBin = new Map<string, { id: string; row: ContributionSourceRow }>();
@@ -736,7 +852,9 @@ async function notifyLeaderboardClimb(userId: string, reportId: string): Promise
   const nowIndex = current.findIndex((entry) => entry.userId === userId);
   if (nowIndex < 0) return;
   const beforeIndex = previous.findIndex((entry) => entry.userId === userId);
-  if (beforeIndex >= 0 && nowIndex >= beforeIndex) return;
+  // A first contribution is handled by the "you are on the leaderboard"
+  // notice; this push is only for an actual climb.
+  if (beforeIndex < 0 || nowIndex >= beforeIndex) return;
 
   const now = current[nowIndex];
   await sendToUsers([userId], {

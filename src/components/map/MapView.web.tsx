@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import 'leaflet/dist/leaflet.css';
 
-import { CAMPUS_CENTER, DEFAULT_MAP_ZOOM } from '@/lib/constants';
+import { CAMPUS_CENTER, CAMPUS_PLACES, DEFAULT_MAP_ZOOM } from '@/lib/constants';
 import type { MapMarker, MapPolygon, MapViewProps } from './types';
 
 type LeafletModule = typeof import('leaflet');
@@ -41,6 +41,9 @@ const PIN_CSS = `
 .rct-pin.is-selected svg { transform: scale(1.16); }
 .rct-num { display:flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:50%; border:2.5px solid #fff; color:#fff; font: 700 12px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; box-shadow: 0 4px 10px rgba(16,20,19,.28); transition: transform .15s ease; }
 .rct-num.is-selected { transform: scale(1.25); }
+.rct-label-anchor { background: transparent !important; border: 0 !important; }
+.rct-label { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); background: rgba(255,255,255,.86); border: 1px solid rgba(16,20,19,.10); border-radius: 6px; padding: 2px 5px; color: #101413; font: 700 10.5px/1.25 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; white-space: nowrap; box-shadow: 0 1px 3px rgba(16,20,19,.18); pointer-events: none; }
+.rct-label.is-minor { font-weight: 600; font-size: 10px; color: #3F4945; background: rgba(255,255,255,.74); }
 .leaflet-container { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
 .leaflet-control-zoom { border: 1px solid #E3E8E5 !important; border-radius: 14px !important; overflow: hidden; box-shadow: 0 8px 24px rgba(16,20,19,.14) !important; }
 .leaflet-control-zoom a { width: 38px !important; height: 38px !important; line-height: 38px !important; color: #101413 !important; background: rgba(255,255,255,.96) !important; font-size: 18px !important; }
@@ -59,6 +62,24 @@ function ensureCss() {
 
 function safeColor(color?: string): string {
   return /^#[0-9a-fA-F]{6}$/.test(color ?? '') ? (color as string) : '#0E7C5A';
+}
+
+/** Place names are curated, but never inject raw strings into HTML. */
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '"':
+        return '&quot;';
+      default:
+        return '&#39;';
+    }
+  });
 }
 
 function binPin(color: string, selected: boolean): string {
@@ -109,6 +130,7 @@ export default function WebMapView({
   polygon,
   polygons,
   maskOutside = false,
+  showPlaceLabels = true,
   fitToPolygon = false,
   style,
 }: MapViewProps) {
@@ -120,6 +142,7 @@ export default function WebMapView({
   const polygonLayerRef = useRef<LeafletLayer | null>(null);
   const maskLayerRef = useRef<LeafletLayer | null>(null);
   const pinsRef = useRef(new Map<string, { layer: import('leaflet').Marker; signature: string }>());
+  const labelsRef = useRef<import('leaflet').LayerGroup | null>(null);
   const markersRef = useRef(markers);
   const onPressMarkerRef = useRef(onPressMarker);
   const onPressMapRef = useRef(onPressMap);
@@ -155,6 +178,17 @@ export default function WebMapView({
       });
       L.control.zoom({ position: 'bottomright' }).addTo(map);
 
+      // A dedicated pane keeps campus place names above the geofence dimming
+      // but below the bin pins.
+      if (!map.getPane('rct-labels') && containerRef.current) {
+        map.createPane('rct-labels');
+      }
+      const labelPane = map.getPane('rct-labels');
+      if (labelPane) {
+        labelPane.style.zIndex = '450';
+        labelPane.style.pointerEvents = 'none';
+      }
+
       map.on('click', (event) => {
         onPressMapRef.current?.(event.latlng.lat, event.latlng.lng);
       });
@@ -184,6 +218,7 @@ export default function WebMapView({
       polygonLayerRef.current = null;
       maskLayerRef.current = null;
       pins.clear();
+      labelsRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -258,7 +293,7 @@ export default function WebMapView({
       maskLayerRef.current = L.polygon([WORLD_RING, ...holes] as [number, number][][], {
         stroke: false,
         fillColor: '#101413',
-        fillOpacity: 0.26,
+        fillOpacity: 0.34,
         interactive: false,
       }).addTo(map);
     }
@@ -268,6 +303,49 @@ export default function WebMapView({
       map.fitBounds(L.latLngBounds(all), { padding: [34, 34], maxZoom: 17, animate: false });
     }
   }, [rings, maskOutside, fitToPolygon, ready]);
+
+  /* Campus place names (the raster basemap does not label EMU buildings) */
+  useEffect(() => {
+    const L = leafletRef.current;
+    const map = mapRef.current;
+    if (!ready || !L || !map || !showPlaceLabels) return;
+
+    const group = L.layerGroup().addTo(map);
+    labelsRef.current = group;
+
+    const labels = CAMPUS_PLACES.map((place) => ({
+      priority: place.priority,
+      layer: L.marker([place.latitude, place.longitude], {
+        pane: 'rct-labels',
+        interactive: false,
+        keyboard: false,
+        icon: L.divIcon({
+          className: 'rct-label-anchor',
+          html: `<div class="rct-label${place.priority === 1 ? '' : ' is-minor'}">${escapeHtml(place.name)}</div>`,
+          iconSize: [0, 0],
+        }),
+      }),
+    }));
+
+    const sync = () => {
+      const currentZoom = map.getZoom();
+      for (const label of labels) {
+        const visible = label.priority === 1 ? currentZoom >= 13.5 : currentZoom >= 16;
+        const present = group.hasLayer(label.layer);
+        if (visible && !present) label.layer.addTo(group);
+        else if (!visible && present) group.removeLayer(label.layer);
+      }
+    };
+
+    map.on('zoomend', sync);
+    sync();
+
+    return () => {
+      map.off('zoomend', sync);
+      group.remove();
+      labelsRef.current = null;
+    };
+  }, [ready, showPlaceLabels]);
 
   /* Markers */
   useEffect(() => {

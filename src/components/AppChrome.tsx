@@ -21,6 +21,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LeaderboardCard } from '@/components/LeaderboardCard';
+import { InstallPrompt } from '@/components/pwa/InstallPrompt';
+import { OfflineBanner } from '@/components/pwa/OfflineBanner';
 import Sidebar from '@/components/Sidebar';
 import { UpdateBanner } from '@/components/updates/UpdateBanner';
 import { BrandMark } from '@/components/ui/BrandMark';
@@ -68,12 +70,9 @@ function navItems(isAdmin: boolean, signedIn: boolean): NavItem[] {
 
   const items: NavItem[] = [
     { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },
-    {
-      key: 'review',
-      href: isAdmin ? '/admin/review' : '/review',
-      label: 'Review',
-      icon: 'time-outline',
-    },
+    // Everyone gets the same review experience; admins moderate separately
+    // from the Admin tab.
+    { key: 'review', href: '/review', label: 'Review', icon: 'time-outline' },
     { key: 'stats', href: '/stats', label: 'Stats', icon: 'stats-chart-outline' },
     { key: 'profile', href: '/profile', label: 'Profile', icon: 'person-circle-outline' },
   ];
@@ -91,7 +90,7 @@ function targetFor(item: NavItem, signedIn: boolean): Href {
 
 function active(pathname: string, item: NavItem): boolean {
   if (item.key === 'map') return pathname === '/' || pathname === '/map';
-  if (item.key === 'review') return pathname === '/review' || pathname === '/admin/review';
+  if (item.key === 'review') return pathname === '/review';
   if (item.key === 'admin') return pathname === '/admin';
   const href = String(item.href);
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -113,7 +112,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [session?.user]);
 
   if (isImmersive(pathname)) {
-    return <View style={styles.shell}>{children}</View>;
+    return (
+      <View style={styles.shell}>
+        {children}
+        <OfflineBanner />
+      </View>
+    );
   }
 
   if (desktop) {
@@ -123,6 +127,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <View style={styles.desktopContent}>
           <UpdateBanner />
           {children}
+          <OfflineBanner />
+          <InstallPrompt />
         </View>
       </View>
     );
@@ -133,6 +139,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {children}
       <UpdateBanner />
       <BottomNav />
+      <OfflineBanner />
+      <InstallPrompt />
     </View>
   );
 }
@@ -265,12 +273,7 @@ export function BottomNav() {
   const left: NavItem[] = signedIn
     ? [
         { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },
-        {
-          key: 'review',
-          href: isAdmin ? '/admin/review' : '/review',
-          label: 'Review',
-          icon: 'time-outline',
-        },
+        { key: 'review', href: '/review', label: 'Review', icon: 'time-outline' },
       ]
     : [
         { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },

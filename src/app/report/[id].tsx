@@ -11,7 +11,7 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { api } from '@/lib/api-client';
-import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
+import { CAMPUS_POLYGONS, CATEGORY_COLORS, COLORS } from '@/lib/constants';
 import { displayNote } from '@/lib/notes';
 import { siteMetadata } from '@/lib/site-metadata';
 import { RADIUS, timeAgo } from '@/lib/theme';
@@ -135,6 +135,8 @@ export default function ReportDetailScreen() {
               ]}
               center={{ latitude: data.lat, longitude: data.lng }}
               zoom={17}
+              polygons={CAMPUS_POLYGONS}
+              maskOutside
               showUserLocation={false}
               style={styles.map}
             />

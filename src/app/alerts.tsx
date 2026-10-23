@@ -127,15 +127,6 @@ export default function AlertsScreen() {
             ? `${awaiting} report${awaiting === 1 ? '' : 's'} awaiting review`
             : 'Updates on the bins you added.'
         }
-        right={
-          <Button
-            title="Refresh"
-            variant="secondary"
-            size="sm"
-            icon="refresh-outline"
-            onPress={() => void refresh()}
-          />
-        }
       />
 
       <View style={styles.filterWrap}>

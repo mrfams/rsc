@@ -1,0 +1,13 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /api/
+Disallow: /profile
+Disallow: /alerts
+Disallow: /review
+Disallow: /sign-in
+Disallow: /sign-up
+Disallow: /report/
+
+Sitemap: https://emu-bin-tracker.vercel.app/sitemap.xml

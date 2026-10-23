@@ -76,6 +76,7 @@
     "lint": "expo lint",
     "seed": "tsx scripts/seed.ts",
     "db:push": "drizzle-kit push",
+    "db:migrate": "tsx scripts/migrate-trust-safety.ts",
     "deploy": "vercel deploy --prebuilt",
     "build:android": "npx eas-cli@latest build --platform android --profile preview",
     "build:android:production": "npx eas-cli@latest build --platform android --profile production",

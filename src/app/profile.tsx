@@ -8,7 +8,6 @@ import {
   Modal,
   Platform,
   Pressable,
-  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -58,7 +57,6 @@ export default function ProfileScreen() {
   const { toast } = useFeedback();
   const { data: session, isPending } = useSession();
   const { data: me } = useMe();
-  const [refreshing, setRefreshing] = useState(false);
   const [accountModal, setAccountModal] = useState<'edit' | 'delete' | null>(null);
   const [nameDraft, setNameDraft] = useState('');
   const [passwordDraft, setPasswordDraft] = useState('');
@@ -100,11 +98,7 @@ export default function ProfileScreen() {
 
   const list = reports?.reports ?? [];
 
-  async function refresh() {
-    setRefreshing(true);
-    await refetch();
-    setRefreshing(false);
-  }
+  
 
   async function signOut() {
     await authClient.signOut();
@@ -180,22 +174,9 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
-      <PageHeader
-        title="Profile"
-        subtitle="Your account and the bins you reported."
-        right={
-          <Button
-            title="Refresh"
-            variant="secondary"
-            size="sm"
-            icon="refresh-outline"
-            onPress={() => void refresh()}
-          />
-        }
-      />
+      <PageHeader title="Profile" />
       <ScrollView
         contentContainerStyle={styles.scroll}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.layout}>
@@ -300,38 +281,6 @@ export default function ProfileScreen() {
                 </Pressable>
               );
             })}
-          </View>
-
-          <View style={styles.accountCard}>
-            <Text style={styles.accountTitle}>Account</Text>
-            <Pressable
-              onPress={openEditAccount}
-              accessibilityRole="button"
-              style={({ pressed }) => [styles.accountRow, pressed && { opacity: 0.7 }]}
-            >
-              <View style={styles.accountRowIcon}>
-                <Ionicons name="create-outline" size={17} color={COLORS.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.accountRowTitle}>Edit profile</Text>
-                <Text style={styles.accountRowSub}>Change the name shown on your sightings.</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
-            </Pressable>
-            <Pressable
-              onPress={openDeleteAccount}
-              accessibilityRole="button"
-              style={({ pressed }) => [styles.accountRow, pressed && { opacity: 0.7 }]}
-            >
-              <View style={[styles.accountRowIcon, styles.accountRowIconDanger]}>
-                <Ionicons name="trash-outline" size={17} color={COLORS.danger} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.accountRowTitle, styles.accountRowDanger]}>Delete account</Text>
-                <Text style={styles.accountRowSub}>Permanently remove your account and sightings.</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
-            </Pressable>
           </View>
 
           <View style={styles.socialFooter}>

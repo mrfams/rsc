@@ -347,6 +347,7 @@ export function AdminMapTab({ onOpenBin }: { onOpenBin: (id: string) => void }) 
           center={mapCenter}
           zoom={selectedBinId || draft ? 16.5 : 15}
           polygons={polygons}
+          maskOutside
           onPressMap={handleMapPress}
           onPressMarker={selectBin}
           style={styles.map}

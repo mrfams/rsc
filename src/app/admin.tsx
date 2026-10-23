@@ -72,6 +72,8 @@ type AdminUser = {
   name: string;
   email: string;
   role: string | null;
+  leaderboardOptIn: boolean;
+  disabledAt: string | null;
   createdAt: string;
 };
 
@@ -687,7 +689,7 @@ function BinsTab({
   const [search, setSearch] = useState('');
   const [notice, setNotice] = useState<NoticeState>(null);
 
-  const { data, isLoading, refetch, isFetching } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ['admin-bins'],
     queryFn: () => api<BinDto[]>('/api/admin/bins'),
   });
@@ -731,9 +733,6 @@ function BinsTab({
         <View style={styles.listHeader}>
           <View style={styles.listHeaderRow}>
             <Text style={styles.sectionTitle}>Bins</Text>
-            <Pressable onPress={() => void refetch()}>
-              <Text style={styles.textLink}>{isFetching ? 'Refreshing…' : 'Refresh'}</Text>
-            </Pressable>
           </View>
           <View style={styles.searchBar}>
             <Ionicons name="search" size={17} color={COLORS.textMuted} />
@@ -1198,6 +1197,40 @@ function PeopleTab() {
     onError: (err) => setNotice({ tone: 'error', text: err.message }),
   });
 
+  const setDisabled = useMutation({
+    mutationFn: ({ id, disabled }: { id: string; disabled: boolean }) =>
+      api(`/api/admin/users/${id}`, { method: 'PATCH', json: { disabled } }),
+    onSuccess: (_data, vars) => {
+      setNotice(null);
+      toast({
+        tone: 'success',
+        title: vars.disabled ? 'Account disabled' : 'Account re-enabled',
+        message: vars.disabled
+          ? 'Their sessions are revoked and they cannot sign in until you re-enable them.'
+          : 'They can sign in again and keep their previous reports.',
+      });
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
+    },
+    onError: (err) => setNotice({ tone: 'error', text: err.message }),
+  });
+
+  const deleteUser = useMutation({
+    mutationFn: (id: string) => api(`/api/admin/users/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      setNotice(null);
+      toast({
+        tone: 'success',
+        title: 'Account deleted',
+        message: 'Their sightings and photos are gone; bins they added stay on the map.',
+      });
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-bins'] });
+      queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
+    },
+    onError: (err) => setNotice({ tone: 'error', text: err.message }),
+  });
+
   const users = (data ?? []).filter((user) => {
     const q = search.trim().toLowerCase();
     if (!q) return true;
@@ -1241,47 +1274,106 @@ function PeopleTab() {
       }
       renderItem={({ item }) => {
         const isAdmin = item.role === 'admin';
+        const disabled = Boolean(item.disabledAt);
         const isSelf = me?.user.email.toLowerCase() === item.email.toLowerCase();
+        const busy = setRole.isPending || setDisabled.isPending || deleteUser.isPending;
         return (
-          <View style={styles.userCard}>
-            <View style={styles.userAvatar}>
-              <Text style={styles.userAvatarText}>{initials(item.name || item.email)}</Text>
+          <View style={[styles.userCard, disabled && { opacity: 0.74 }]}>
+            <View style={styles.userTop}>
+              <View style={styles.userAvatar}>
+                <Text style={styles.userAvatarText}>{initials(item.name || item.email)}</Text>
+              </View>
+              <View style={{ flex: 1, gap: 2, minWidth: 0 }}>
+                <Text style={styles.userName} numberOfLines={1}>
+                  {item.name || 'Member'}
+                  {isSelf ? ' (you)' : ''}
+                </Text>
+                <Text style={styles.userEmail} numberOfLines={1}>
+                  {item.email}
+                </Text>
+              </View>
+              <View style={[styles.activePill, !isAdmin && styles.hiddenPill]}>
+                <Text style={[styles.activePillText, !isAdmin && styles.hiddenPillText]}>
+                  {isAdmin ? 'Admin' : 'Member'}
+                </Text>
+              </View>
+              {disabled ? (
+                <View style={styles.disabledPill}>
+                  <Text style={styles.disabledPillText}>Disabled</Text>
+                </View>
+              ) : null}
             </View>
-            <View style={{ flex: 1, gap: 2 }}>
-              <Text style={styles.userName} numberOfLines={1}>
-                {item.name || 'Member'}
-                {isSelf ? ' (you)' : ''}
-              </Text>
-              <Text style={styles.userEmail} numberOfLines={1}>
-                {item.email}
-              </Text>
-            </View>
-            <View style={[styles.activePill, !isAdmin && styles.hiddenPill]}>
-              <Text style={[styles.activePillText, !isAdmin && styles.hiddenPillText]}>
-                {isAdmin ? 'Admin' : 'Member'}
-              </Text>
-            </View>
-            <Button
-              title={isAdmin ? 'Remove' : 'Make admin'}
-              size="sm"
-              variant={isAdmin ? 'secondary' : 'primary'}
-              disabled={isSelf || setRole.isPending}
-              onPress={() => {
-                if (isAdmin) {
+
+            <View style={styles.userActions}>
+              <Button
+                title={isAdmin ? 'Remove admin' : 'Make admin'}
+                size="sm"
+                variant={isAdmin ? 'secondary' : 'primary'}
+                disabled={isSelf || busy}
+                onPress={() => {
+                  if (isAdmin) {
+                    confirm({
+                      tone: 'warning',
+                      title: `Remove ${item.name || item.email}?`,
+                      message: 'They will immediately lose access to the admin tools.',
+                      confirmLabel: 'Remove access',
+                      cancelLabel: 'Keep admin',
+                      destructive: true,
+                      onConfirm: () => setRole.mutate({ id: item.id, isAdmin: false }),
+                    });
+                  } else {
+                    setRole.mutate({ id: item.id, isAdmin: true });
+                  }
+                }}
+              />
+              <Button
+                title={disabled ? 'Enable' : 'Disable'}
+                size="sm"
+                variant="secondary"
+                disabled={isSelf || busy}
+                onPress={() => {
+                  if (!disabled) {
+                    confirm({
+                      tone: 'warning',
+                      title: `Disable ${item.name || item.email}?`,
+                      message:
+                        'They are signed out everywhere and cannot sign in again until you re-enable the account. Their sightings stay on the map.',
+                      confirmLabel: 'Disable account',
+                      cancelLabel: 'Keep active',
+                      destructive: true,
+                      onConfirm: () => setDisabled.mutate({ id: item.id, disabled: true }),
+                    });
+                  } else {
+                    setDisabled.mutate({ id: item.id, disabled: false });
+                  }
+                }}
+              />
+              <Pressable
+                onPress={() =>
                   confirm({
                     tone: 'warning',
-                    title: `Remove ${item.name || item.email}?`,
-                    message: 'They will immediately lose access to the admin tools.',
-                    confirmLabel: 'Remove access',
-                    cancelLabel: 'Keep admin',
+                    title: `Delete ${item.name || item.email}?`,
+                    message:
+                      'This permanently deletes the account, its points, its sightings and its photos. Bins they added stay on the map. This cannot be undone.',
+                    confirmLabel: 'Delete forever',
+                    cancelLabel: 'Cancel',
                     destructive: true,
-                    onConfirm: () => setRole.mutate({ id: item.id, isAdmin: false }),
-                  });
-                } else {
-                  setRole.mutate({ id: item.id, isAdmin: true });
+                    onConfirm: () => deleteUser.mutate(item.id),
+                  })
                 }
-              }}
-            />
+                disabled={isSelf || busy}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={`Delete ${item.name || item.email}`}
+                style={({ pressed }) => [
+                  styles.userDelete,
+                  (isSelf || busy) && { opacity: 0.4 },
+                  pressed && { opacity: 0.6 },
+                ]}
+              >
+                <Ionicons name="trash-outline" size={17} color={COLORS.danger} />
+              </Pressable>
+            </View>
           </View>
         );
       }}
@@ -2233,9 +2325,7 @@ const styles = StyleSheet.create({
   },
 
   userCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 11,
+    gap: 10,
     backgroundColor: COLORS.surface,
     borderRadius: RADIUS.md,
     borderWidth: 1,
@@ -2243,6 +2333,24 @@ const styles = StyleSheet.create({
     padding: 11,
     ...SHADOW.sm,
   },
+  userTop: { flexDirection: 'row', alignItems: 'center', gap: 11 },
+  userActions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  userDelete: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: COLORS.dangerSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 'auto',
+  },
+  disabledPill: {
+    backgroundColor: COLORS.surfaceAlt,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  disabledPillText: { fontSize: 10.5, fontWeight: '700', color: COLORS.textMuted },
   userAvatar: {
     width: 40,
     height: 40,

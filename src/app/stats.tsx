@@ -348,7 +348,7 @@ function StandingCard({ stats }: { stats: ContributionStats }) {
 
       {!stats.leaderboardOptIn ? (
         <Text style={styles.standingPrivate}>
-          Your points and rank are private. Allow the leaderboard above to show your name publicly.
+          Your points and rank are private. Opt in to the leaderboard to appear publicly.
         </Text>
       ) : null}
     </View>

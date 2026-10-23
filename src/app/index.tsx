@@ -326,6 +326,7 @@ export default function MapScreen() {
         center={mapCenter}
         zoom={mapZoom}
         polygons={campusPolygons}
+        maskOutside
         basemap={basemap}
         onPressMarker={openBin}
         onPressMap={handleMapPress}

@@ -1,9 +1,10 @@
+import { asc } from 'drizzle-orm';
+
 import { getSessionUser, isAdminUser } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { user } from '@/lib/db/schema';
-import { asc } from 'drizzle-orm';
 
-/** GET /api/admin/users — every member with their role (admin only). */
+/** GET /api/admin/users — every member with role and suspension state (admin only). */
 export async function GET(request: Request) {
   const admin = await getSessionUser(request);
   if (!admin) throw new Response('Unauthorized', { status: 401 });
@@ -15,6 +16,8 @@ export async function GET(request: Request) {
       name: user.name,
       email: user.email,
       role: user.role,
+      leaderboardOptIn: user.leaderboardOptIn,
+      disabledAt: user.disabledAt,
       createdAt: user.createdAt,
     })
     .from(user)

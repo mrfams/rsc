@@ -18,7 +18,7 @@ import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { Feature, MultiPolygon, Polygon, Position } from 'geojson';
-import { CAMPUS_CENTER, DEFAULT_MAP_ZOOM } from '@/lib/constants';
+import { CAMPUS_CENTER, CAMPUS_PLACES, DEFAULT_MAP_ZOOM } from '@/lib/constants';
 import { SHADOW } from '@/lib/theme';
 import type { MapMarker, MapPolygon, MapViewProps } from './types';
 
@@ -47,6 +47,8 @@ const SATELLITE_STYLE: StyleSpecification = {
       maxzoom: 19,
     },
   },
+  // Campus labels are a symbol layer, so the satellite style needs glyphs too.
+  glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
   layers: [
     { id: 'esri-imagery', type: 'raster', source: 'esri' },
     { id: 'esri-places', type: 'raster', source: 'places' },
@@ -55,6 +57,21 @@ const SATELLITE_STYLE: StyleSpecification = {
 
 function ringToGeoJSON(polygon: MapPolygon): Position[] {
   return polygon.map((p): Position => [p.longitude, p.latitude]);
+}
+
+/** Shoelace area; positive means counter-clockwise in lng/lat space. */
+function signedArea(ring: Position[]): number {
+  let area = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    area += ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+  }
+  return area / 2;
+}
+
+/** RFC 7946: exterior rings counter-clockwise, holes clockwise. */
+function orientRing(ring: Position[], counterClockwise: boolean): Position[] {
+  const isCounterClockwise = signedArea(ring) > 0;
+  return isCounterClockwise === counterClockwise ? ring : [...ring].reverse();
 }
 
 function pinColor(marker: MapMarker): string {
@@ -98,6 +115,19 @@ function MarkerBody({ marker }: { marker: MapMarker }) {
   );
 }
 
+const PLACES_GEOJSON = {
+  type: 'FeatureCollection' as const,
+  features: CAMPUS_PLACES.map((place) => ({
+    type: 'Feature' as const,
+    id: place.name,
+    properties: { name: place.name, priority: place.priority },
+    geometry: {
+      type: 'Point' as const,
+      coordinates: [place.longitude, place.latitude] as Position,
+    },
+  })),
+};
+
 function fitCenter(polygons: MapPolygon[] | undefined) {
   if (!polygons?.length) return CAMPUS_CENTER;
   const points = polygons.flat();
@@ -118,6 +148,7 @@ export default function MapView({
   polygon,
   polygons,
   maskOutside = false,
+  showPlaceLabels = true,
   fitToPolygon = false,
   style,
 }: MapViewProps) {
@@ -151,16 +182,22 @@ export default function MapView({
     const valid = rings.filter((ring) => ring.length >= 3);
     if (valid.length === 0 || !maskOutside) return null;
     const world: Position[] = [
-      [-180, 85],
-      [180, 85],
-      [180, -85],
       [-180, -85],
+      [180, -85],
+      [180, 85],
       [-180, 85],
+      [-180, -85],
     ];
     return {
       type: 'Feature',
       properties: {},
-      geometry: { type: 'Polygon', coordinates: [world, ...valid.map(ringToGeoJSON)] },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          orientRing(world, true),
+          ...valid.map((ring) => orientRing(ringToGeoJSON(ring), false)),
+        ],
+      },
     };
   }, [rings, maskOutside]);
 
@@ -188,7 +225,7 @@ export default function MapView({
           <Layer
             id="outside-mask-fill"
             type="fill"
-            paint={{ 'fill-color': '#101413', 'fill-opacity': 0.26 }}
+            paint={{ 'fill-color': '#101413', 'fill-opacity': 0.34 }}
           />
         </GeoJSONSource>
       ) : null}
@@ -204,6 +241,56 @@ export default function MapView({
             id="campus-boundary-line"
             type="line"
             paint={{ 'line-color': '#0E7C5A', 'line-width': 2, 'line-dasharray': [2, 2] }}
+          />
+        </GeoJSONSource>
+      ) : null}
+
+      {/* Named campus places come from the curated OSM list: the raster
+          basemap never labels EMU buildings at this zoom. Major places show
+          first, the rest appear when the user zooms in. */}
+      {showPlaceLabels ? (
+        <GeoJSONSource id="campus-places" data={PLACES_GEOJSON}>
+          <Layer
+            id="campus-places-major"
+            type="symbol"
+            filter={['==', ['get', 'priority'], 1]}
+            minzoom={13.5}
+            layout={{
+              'text-field': ['get', 'name'],
+              'text-font': ['Noto Sans Regular'],
+              'text-size': ['interpolate', ['linear'], ['zoom'], 14, 10.5, 17, 13.5],
+              'text-anchor': 'top',
+              'text-offset': [0, 0.6],
+              'text-max-width': 9,
+              'text-padding': 3,
+            }}
+            paint={{
+              'text-color': '#101413',
+              'text-halo-color': '#FFFFFF',
+              'text-halo-width': 1.6,
+              'text-halo-blur': 0.4,
+            }}
+          />
+          <Layer
+            id="campus-places-all"
+            type="symbol"
+            filter={['==', ['get', 'priority'], 2]}
+            minzoom={16}
+            layout={{
+              'text-field': ['get', 'name'],
+              'text-font': ['Noto Sans Regular'],
+              'text-size': ['interpolate', ['linear'], ['zoom'], 16, 11, 19, 14],
+              'text-anchor': 'top',
+              'text-offset': [0, 0.6],
+              'text-max-width': 9,
+              'text-padding': 3,
+            }}
+            paint={{
+              'text-color': '#3F4945',
+              'text-halo-color': '#FFFFFF',
+              'text-halo-width': 1.5,
+              'text-halo-blur': 0.4,
+            }}
           />
         </GeoJSONSource>
       ) : null}

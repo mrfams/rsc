@@ -11,6 +11,7 @@ export const OG_IMAGE_URL = `${APP_WEB_URL}/og-image.png`;
 
 const OG_IMAGE = {
   url: OG_IMAGE_URL,
+  secureUrl: OG_IMAGE_URL,
   width: 1200,
   height: 630,
   type: 'image/png',
@@ -31,7 +32,9 @@ type PageMetadataOptions = {
  * Shared Open Graph / Twitter metadata for server-rendered pages.
  *
  * Expo Router calls this on the server before rendering, so crawlers get the
- * tags in the first HTML response instead of waiting for hydration.
+ * tags in the first HTML response instead of waiting for hydration. Every
+ * sharing surface (WhatsApp, Telegram, Slack, X, Discord, iMessage) reads
+ * these tags, so the image is always an absolute URL.
  */
 export function siteMetadata({
   title,
@@ -40,7 +43,7 @@ export function siteMetadata({
   noIndex = false,
 }: PageMetadataOptions = {}): Metadata {
   const fullTitle = title ? `${title} | ${SITE_NAME}` : SITE_NAME;
-  const url = path ? `${APP_WEB_URL}${path}` : undefined;
+  const url = path ? `${APP_WEB_URL}${path}` : APP_WEB_URL;
 
   return {
     title: fullTitle,
@@ -58,7 +61,15 @@ export function siteMetadata({
     creator: 'Recycling & Sustainability Club',
     publisher: 'Recycling & Sustainability Club',
     category: 'community',
-    ...(url ? { alternates: { canonical: url } } : {}),
+    alternates: { canonical: url },
+    robots: noIndex
+      ? { index: false, follow: true }
+      : {
+          index: true,
+          follow: true,
+          googleBot: { index: true, follow: true, 'max-image-preview': 'large' },
+        },
+    formatDetection: { telephone: false, address: false, email: false },
     openGraph: {
       title: fullTitle,
       description,
@@ -66,19 +77,27 @@ export function siteMetadata({
       locale: 'en_US',
       type: 'website',
       images: [OG_IMAGE],
-      ...(url ? { url } : {}),
+      url,
     },
     twitter: {
       card: 'summary_large_image',
       title: fullTitle,
       description,
-      images: [OG_IMAGE_URL],
+      images: [{ url: OG_IMAGE_URL, alt: OG_IMAGE.alt }],
     },
     icons: {
-      icon: '/favicon.ico',
-      apple: '/icon-180.png',
+      icon: [
+        { url: '/favicon.ico', sizes: 'any' },
+        { url: '/icon-192.png', type: 'image/png', sizes: '192x192' },
+        { url: '/icon-512.png', type: 'image/png', sizes: '512x512' },
+      ],
+      shortcut: '/favicon.ico',
+      apple: { url: '/icon-180.png', sizes: '180x180', type: 'image/png' },
     },
     manifest: '/manifest.json',
-    ...(noIndex ? { robots: { index: false, follow: true } } : {}),
+    appleWebApp: {
+      title: 'EMU Bins',
+      statusBarStyle: 'default',
+    },
   };
 }

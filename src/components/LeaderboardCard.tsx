@@ -1,10 +1,7 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Button } from '@/components/ui/Button';
 import { useFeedback } from '@/components/ui/Feedback';
 import { api } from '@/lib/api-client';
 import { useSession } from '@/lib/auth-client';
@@ -13,38 +10,17 @@ import type { PublicLeaderboard } from '@/lib/points';
 import { RADIUS } from '@/lib/theme';
 import { useMe } from '@/lib/use-me';
 
-const PROMPT_KEY = 'rsc.leaderboard-prompt-dismissed';
-
 /**
- * Top-10 board for the navigation menu. Names only appear for members who
- * explicitly allowed it. A declined prompt is remembered without blocking the
- * compact "Join" action, so nobody has to clear storage to change their mind.
+ * Top-10 board for the navigation menu.
+ *
+ * Members are public by default; the first-point notice offers the choice to
+ * hide, and this card is the always-available way to change it later.
  */
 export function LeaderboardCard({ compact = false }: { compact?: boolean }) {
   const queryClient = useQueryClient();
   const { toast, confirm } = useFeedback();
   const { data: session } = useSession();
   const { data: me } = useMe();
-  const [dismissed, setDismissed] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    AsyncStorage.getItem(PROMPT_KEY)
-      .then((value) => {
-        if (active && value === '1') setDismissed(true);
-      })
-      .catch(() => {
-        // A failed read only means the prompt may be shown again.
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  function dismissPrompt() {
-    setDismissed(true);
-    void AsyncStorage.setItem(PROMPT_KEY, '1').catch(() => {});
-  }
 
   const { data, isLoading } = useQuery({
     queryKey: ['leaderboard'],
@@ -57,12 +33,6 @@ export function LeaderboardCard({ compact = false }: { compact?: boolean }) {
     onSuccess: (_data, leaderboardOptIn) => {
       queryClient.invalidateQueries({ queryKey: ['me'] });
       queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
-      // Do not immediately re-ask someone who just chose to hide.
-      if (leaderboardOptIn) {
-        void AsyncStorage.removeItem(PROMPT_KEY).catch(() => {});
-      } else {
-        dismissPrompt();
-      }
       toast({
         tone: 'success',
         title: leaderboardOptIn ? 'You are on the leaderboard' : 'Hidden from the leaderboard',
@@ -77,7 +47,6 @@ export function LeaderboardCard({ compact = false }: { compact?: boolean }) {
 
   const signedIn = Boolean(session?.user);
   const optedIn = me?.leaderboardOptIn === true;
-  const canAsk = signedIn && me !== undefined && !optedIn && !dismissed;
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
 
@@ -105,41 +74,16 @@ export function LeaderboardCard({ compact = false }: { compact?: boolean }) {
         </Text>
       </View>
 
-      {canAsk ? (
-        <View style={styles.permission}>
-          <Text style={styles.permissionTitle}>Join the top 10?</Text>
-          <Text style={styles.permissionText}>
-            Allow your name and points to be shown on the public leaderboard.
-          </Text>
-          <View style={styles.permissionActions}>
-            <Button
-              title="Allow"
-              size="sm"
-              icon="checkmark"
-              loading={setOptIn.isPending}
-              onPress={() => setOptIn.mutate(true)}
-            />
-            <Pressable
-              onPress={dismissPrompt}
-              accessibilityRole="button"
-              accessibilityLabel="Not now"
-              style={({ pressed }) => [styles.notNow, pressed && { opacity: 0.6 }]}
-            >
-              <Text style={styles.notNowText}>Not now</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
-
-      {signedIn && !optedIn && dismissed ? (
+      {signedIn && me !== undefined && !optedIn ? (
         <Pressable
           onPress={() => setOptIn.mutate(true)}
+          disabled={setOptIn.isPending}
           accessibilityRole="button"
           accessibilityLabel="Join the leaderboard"
           style={({ pressed }) => [styles.joinRow, pressed && { opacity: 0.6 }]}
         >
           <Ionicons name="add-circle-outline" size={13} color={COLORS.primary} />
-          <Text style={styles.joinText}>Join the leaderboard</Text>
+          <Text style={styles.joinText}>You are hidden — join the leaderboard</Text>
         </Pressable>
       ) : null}
 
@@ -167,7 +111,7 @@ export function LeaderboardCard({ compact = false }: { compact?: boolean }) {
       ) : rows.length === 0 ? (
         <Text style={styles.empty}>
           {signedIn
-            ? 'Nobody has agreed to share a rank yet. Be the first.'
+            ? 'Nobody has earned a rank yet. Add a bin to be the first.'
             : 'No shared ranks yet. Sign in to join the top 10.'}
         </Text>
       ) : (
@@ -191,7 +135,7 @@ export function LeaderboardCard({ compact = false }: { compact?: boolean }) {
       )}
 
       {!signedIn ? (
-        <Text style={styles.footnote}>Only members who allow it appear by name.</Text>
+        <Text style={styles.footnote}>Members appear once they earn a point.</Text>
       ) : null}
     </View>
   );
@@ -217,24 +161,6 @@ const styles = StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   title: { fontSize: 13.5, fontWeight: '800', color: COLORS.text, letterSpacing: -0.2 },
   meta: { fontSize: 10.5, color: COLORS.textMuted, fontWeight: '600' },
-  permission: {
-    backgroundColor: COLORS.primarySoft,
-    borderRadius: RADIUS.sm,
-    padding: 10,
-    gap: 4,
-    marginBottom: 3,
-  },
-  permissionTitle: { fontSize: 12.5, fontWeight: '800', color: COLORS.text },
-  permissionText: { fontSize: 11.5, lineHeight: 16, color: COLORS.textMuted },
-  permissionActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 5,
-    flexWrap: 'wrap',
-  },
-  notNow: { paddingVertical: 4, paddingHorizontal: 2 },
-  notNowText: { fontSize: 12, fontWeight: '700', color: COLORS.textMuted },
   joinRow: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 3 },
   joinText: { fontSize: 10.5, fontWeight: '700', color: COLORS.primary },
   youRow: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 2 },

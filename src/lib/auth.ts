@@ -2,12 +2,17 @@ import 'dotenv/config';
 import { expo } from '@better-auth/expo';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { eq, inArray, sql } from 'drizzle-orm';
+import { APIError } from 'better-auth/api';
+import { eq } from 'drizzle-orm';
 
+import {
+  captureUserContributions,
+  cleanUpUserContributions,
+  type UserContributions,
+} from './account-service';
 import { db } from './db';
 import * as authSchema from './db/auth-schema';
-import { bins, reports } from './db/schema';
-import { deletePhotos } from './photo-storage';
+import { user } from './db/schema';
 
 const dev = process.env.NODE_ENV !== 'production';
 
@@ -31,8 +36,7 @@ export function isAdminUser(user: { email: string; role?: string | null } | null
 }
 
 /* Bins and photos touched by an account deletion, captured before the cascade. */
-type AccountDeletion = { binIds: string[]; photoPaths: string[] };
-const deletions = new Map<string, AccountDeletion>();
+const deletions = new Map<string, UserContributions>();
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
@@ -43,43 +47,14 @@ export const auth = betterAuth({
     deleteUser: {
       enabled: true,
       beforeDelete: async (deletedUser) => {
-        const rows = await db
-          .select({ binId: reports.binId, photoPath: reports.photoPath })
-          .from(reports)
-          .where(eq(reports.userId, deletedUser.id));
-        deletions.set(deletedUser.id, {
-          binIds: [...new Set(rows.map((row) => row.binId))],
-          photoPaths: rows.map((row) => row.photoPath).filter((value): value is string => Boolean(value)),
-        });
+        deletions.set(deletedUser.id, await captureUserContributions(deletedUser.id));
       },
       afterDelete: async (deletedUser) => {
         const touched = deletions.get(deletedUser.id) ?? { binIds: [], photoPaths: [] };
         deletions.delete(deletedUser.id);
-
         // The reports were removed by the foreign-key cascade. Their photos
         // are not in the database anymore, so remove the stored objects too.
-        if (touched.photoPaths.length > 0) {
-          await deletePhotos(touched.photoPaths);
-        }
-
-        if (touched.binIds.length === 0) return;
-        try {
-          await db
-            .update(bins)
-            .set({
-              reportCount: sql`(select count(*)::double precision from ${reports} where ${reports.binId} = ${bins.id})`,
-              status: sql`case
-                when ${bins.status} in ('removed', 'disputed') then ${bins.status}
-                when (select count(distinct ${reports.userId}) from ${reports} where ${reports.binId} = ${bins.id}) >= 2 then 'verified'::bin_status
-                else 'pending'::bin_status
-              end`,
-              updatedAt: new Date(),
-            })
-            .where(inArray(bins.id, touched.binIds));
-        } catch (error) {
-          // The account is already gone; leave the map usable and log the gap.
-          console.error('Could not rebuild bin aggregates after account deletion', error);
-        }
+        await cleanUpUserContributions(touched);
       },
     },
   },
@@ -95,6 +70,25 @@ export const auth = betterAuth({
           if (isAdminEmail(created.email)) {
             (created as { role?: string }).role = 'admin';
           }
+        },
+      },
+    },
+    session: {
+      create: {
+        before: async (createdSession) => {
+          // A disabled member must not be able to start a new session, even
+          // with valid credentials. Checked here so every auth method obeys it.
+          const [row] = await db
+            .select({ disabledAt: user.disabledAt })
+            .from(user)
+            .where(eq(user.id, createdSession.userId))
+            .limit(1);
+          if (row?.disabledAt) {
+            throw new APIError('FORBIDDEN', {
+              message: 'This account has been disabled. Contact the sustainability office.',
+            });
+          }
+          return true;
         },
       },
     },
@@ -120,8 +114,25 @@ export const auth = betterAuth({
   ],
 });
 
-/** Current signed-in user for a request, or null. */
+/**
+ * Current signed-in user for a request, or null.
+ *
+ * `role` and the disabled flag are read fresh from the database on every API
+ * call. Better Auth's session payload only carries the core columns, so a
+ * role granted from the admin panel would otherwise be invisible to
+ * `isAdminUser` until the user signed in again (and never, for an existing
+ * session). Reading here makes promotion, demotion and suspension immediate.
+ */
 export async function getSessionUser(request: Request) {
   const session = await auth.api.getSession({ headers: request.headers });
-  return session?.user ?? null;
+  if (!session?.user) return null;
+
+  const [row] = await db
+    .select({ role: user.role, disabledAt: user.disabledAt })
+    .from(user)
+    .where(eq(user.id, session.user.id))
+    .limit(1);
+  if (!row || row.disabledAt) return null;
+
+  return { ...session.user, role: row.role ?? null };
 }
