@@ -393,11 +393,15 @@ function OverviewTab({
   });
 
   // Cards and map-health numbers ignore bins whose type has been switched off.
+  // Only count categories that are active AND have at least one bin.
   const allBins = bins ?? [];
-  const activeSlugs = new Set(
-    (categories ?? []).filter((category) => category.active).map((category) => category.slug),
+  const activeCategoriesWithBins = (categories ?? []).filter(
+    (category) => category.active && (allBins ?? []).some((bin) => bin.category === category.slug),
   );
-  const list = categories
+  const activeSlugs = new Set(
+    activeCategoriesWithBins.map((category) => category.slug),
+  );
+  const list = activeCategoriesWithBins.length
     ? allBins.filter((bin) => activeSlugs.has(bin.category))
     : allBins;
   const pending = list.filter((b) => b.status === 'pending').length;
@@ -473,7 +477,7 @@ function OverviewTab({
         <View style={styles.cardHeaderRow}>
           <Text style={styles.cardTitle}>Map health</Text>
           <Text style={styles.cardMeta}>
-            {categories?.filter((c) => c.active).length ?? 0} active types
+            {activeCategoriesWithBins.length} active types
           </Text>
         </View>
         <View style={styles.breakdownBar}>
