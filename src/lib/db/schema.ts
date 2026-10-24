@@ -61,6 +61,7 @@ export const bins = pgTable(
     area: text('area'),
     status: binStatusEnum('status').notNull().default('pending'),
     reportCount: doublePrecision('report_count').notNull().default(0),
+    binCount: doublePrecision('bin_count').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
