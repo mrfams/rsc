@@ -434,7 +434,7 @@ function OverviewTab({
       <View style={styles.statsGrid}>
         <StatCard
           label="Total bins"
-          value={String(list.length)}
+          value={String(list.filter((b) => b.status !== 'removed').length)}
           icon="trash-outline"
           tone={COLORS.primary}
           onPress={() => onOpenBins('all')}
