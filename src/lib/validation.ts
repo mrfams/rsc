@@ -11,6 +11,8 @@ export const reportSchema = z.object({
   /** Optional place name; the server falls back to the nearest campus place. */
   name: z.string().max(80).optional(),
   note: z.string().max(500).optional(),
+  /** Number of bins this sighting refers to (for batch/cluster reports). Must be at least 1. */
+  binCount: z.number().int().min(1),
   /**
    * data:image/jpeg;base64,… — the client compresses to ≤ 900 KB, which is
    * ~1.2 M base64 characters. The server decodes and enforces the real 1 MB

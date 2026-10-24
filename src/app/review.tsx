@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { Redirect, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -22,14 +22,14 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Segmented } from '@/components/ui/Segmented';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { api } from '@/lib/api-client';
-import { useSession } from '@/lib/auth-client';
+import { useSession, useMe } from '@/lib/auth-client';
 import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
 import { displayNote } from '@/lib/notes';
-import type { ReviewItemDto } from '@/lib/report-service';
+import type { ReviewItemDto, BinDto } from '@/lib/report-service';
 import { siteMetadata } from '@/lib/site-metadata';
 import { RADIUS, SHADOW, timeAgo } from '@/lib/theme';
 import { categoryEmoji } from '@/lib/validation';
-
+import { Field } from '@/components/ui/Field';
 export function generateMetadata() {
   return siteMetadata({ title: 'Review queue', path: '/review', noIndex: true });
 }
@@ -61,6 +61,7 @@ export default function ReviewScreen() {
   const [busyId, setBusyId] = useState<string | null>(null);
   /** Bins handled in this session stay out of the list until a refetch. */
   const [handled, setHandled] = useState<Set<string>>(new Set());
+  const [adminNotice, setAdminNotice] = useState<NoticeState>(null);
 
   const review = useQuery({
     queryKey: ['review-queue'],
@@ -68,11 +69,18 @@ export default function ReviewScreen() {
     enabled: Boolean(session?.user),
   });
 
+  // Check if current user is admin
+  const { data: me, isLoading: meLoading } = useMe();
+  const isAdmin = me?.role === 'admin';
+
   const { data: config } = useQuery({
     queryKey: ['config'],
     queryFn: () => api<Config>('/api/config'),
     staleTime: 60_000,
   });
+
+  // Notice for edit operations
+  const { data: notice, isLoading: noticeLoading } = useFeedback();
 
   if (isPending) {
     return (
@@ -86,6 +94,14 @@ export default function ReviewScreen() {
     return <Redirect href="/sign-in" />;
   }
 
+  if (meLoading) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <ActivityIndicator color={COLORS.primary} />
+      </SafeAreaView>
+    );
+  }
+
   const categories = config?.categories ?? [];
   const activeSlugs = new Set(
     categories.filter((category) => category.active).map((category) => category.slug),
@@ -96,6 +112,14 @@ export default function ReviewScreen() {
       color: CATEGORY_COLORS[slug] ?? COLORS.primary,
       emoji: categoryEmoji(slug),
     };
+
+  // Track if we're showing the edit form for a specific bin
+  const [editingBinId, setEditingBinId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<{ name: string; category: string; area: string } | null>(null);
+
+  // Track if we're showing the suggest edit form for a specific bin
+  const [suggestingEdit, setSuggestingEdit] = useState<string | null>(null);
+  const [suggestForm, setSuggestForm] = useState<{ name: string; category: string; area: string } | null>(null);
 
   const queue = (review.data?.items ?? [])
     .filter((item) => !handled.has(item.id))
@@ -178,6 +202,76 @@ export default function ReviewScreen() {
     }
   }
 
+  // Handle bin tap - shows options based on user role
+  const onBinTap = async (binId: string) => {
+    if (isAdmin) {
+      // Admin: directly edit the bin
+      onEditBin(binId);
+    } else {
+      // Normal user: suggest edit for admin review
+      onSuggestEdit(binId);
+    }
+  };
+
+  // Admin: edit a bin from the review screen
+  const onEditBin = async (binId: string) => {
+    if (!isAdmin) return;
+    const bin = (await (await fetch(`/api/admin/bins/${binId}`)).json()) as BinDto;
+    if (!bin) return;
+    setEditingBinId(binId);
+    setEditForm({
+      name: bin.name ?? '',
+      category: bin.category,
+      area: bin.area ?? '',
+    });
+  };
+
+  // Normal user: suggest an edit for a bin (goes through admin review)
+  const onSuggestEdit = async (binId: string) => {
+    if (isAdmin) return;
+    // Fetch the bin details to get the current values for the suggestion
+    const bin = (await (await fetch(`/api/admin/bins/${binId}`)).json()) as BinDto;
+    if (!bin) return;
+    const suggestion = await api(`/api/admin/bins/${binId}/suggest-edit`, {
+      method: 'POST',
+      json: { name: bin.name ?? '', category: bin.category, area: bin.area ?? '' },
+    });
+    toast({
+      tone: 'info',
+      title: 'Edit suggested',
+      message: 'Your edit suggestion has been submitted for admin review.',
+    });
+  };
+
+  // Save edited bin
+  const onSaveEdit = useMutation({
+    mutationFn: ({ binId, name, category, area }: { binId: string; name: string; category: string; area: string }) =>
+      api(`/api/admin/bins/${binId}`, { method: 'PATCH', json: { name, category, area } }),
+    onSuccess: (_data, vars) => {
+      setEditingBinId(null);
+      setEditForm(null);
+      toast({
+        tone: 'success',
+        title: 'Bin updated',
+        message: 'The bin details have been updated for everyone.',
+      });
+      queryClient.invalidateQueries({ queryKey: ['review-queue'] });
+      queryClient.invalidateQueries({ queryKey: ['bins'] });
+    },
+    onError: (err) => setNotice({ tone: 'error', text: err.message }),
+  });
+
+  // Cancel edit
+  const onCancelEdit = () => {
+    setEditingBinId(null);
+    setEditForm(null);
+  };
+
+  // Cancel suggest edit
+  const onCancelSuggestEdit = () => {
+    setSuggestingEdit(null);
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <PageHeader
@@ -185,7 +279,107 @@ export default function ReviewScreen() {
         subtitle="Confirm the bins you can see, and flag the ones that are gone."
       />
 
-      <ScrollView
+  {editingBinId ? (
+    <View style={styles.editForm}>
+      <View style={styles.editFormHeader}>
+        <View style={styles.editFormClose} onPress={onCancelEdit}>
+          <Ionicons name="close" size={20} color={COLORS.text} />
+        </View>
+        <Text style={styles.editFormTitle}>Edit bin details</Text>
+      </View>
+      <View style={styles.editFormBody}>
+        <Field
+          label="Name"
+          value={editForm?.name ?? ''}
+          onChangeText={(v) => setEditForm({ ...editForm, name: v })}
+          placeholder="e.g. DAU 3 Dormitory"
+        />
+        <Field
+          label="Category"
+          value={editForm?.category ?? ''}
+          onChangeText={(v) => setEditForm({ ...editForm, category: v })}
+          placeholder="e.g. plastic"
+        />
+        <Field
+          label="Area / location description"
+          value={editForm?.area ?? ''}
+          onChangeText={(v) => setEditForm({ ...editForm, area: v })}
+          placeholder="e.g. near the main entrance"
+        />
+      </View>
+      <View style={styles.editFormActions}>
+        <Button
+          title="Cancel"
+          variant="secondary"
+          size="sm"
+          onPress={onCancelEdit}
+        />
+        <Button
+          title="Save changes"
+          loading={onSaveEdit.isPending}
+          onPress={() => {
+            if (editForm) {
+              onSaveEdit.mutate({
+                binId: editingBinId,
+                name: editForm.name,
+                category: editForm.category,
+                area: editForm.area,
+              });
+            }
+          }}
+        />
+      </View>
+    </View>
+  ) : null}
+  {suggestingEdit ? (
+    <View style={styles.suggestForm}>
+      <View style={styles.suggestFormHeader}>
+        <View style={styles.suggestFormClose} onPress={onCancelSuggestEdit}>
+          <Ionicons name="close" size={20} color={COLORS.text} />
+        </View>
+        <Text style={styles.suggestFormTitle}>Suggest bin edit</Text>
+      </View>
+      <View style={styles.suggestFormBody}>
+        <Field
+          label="Name"
+          value={suggestForm?.name ?? ''}
+          onChangeText={(v) => setSuggestForm({ ...suggestForm, name: v })}
+          placeholder="e.g. DAU 3 Dormitory"
+        />
+        <Field
+          label="Category"
+          value={suggestForm?.category ?? ''}
+          onChangeText={(v) => setSuggestForm({ ...suggestForm, category: v })}
+          placeholder="e.g. plastic"
+        />
+        <Field
+          label="Area / location description"
+          value={suggestForm?.area ?? ''}
+          onChangeText={(v) => setSuggestForm({ ...suggestForm, area: v })}
+          placeholder="e.g. near the main entrance"
+        />
+      </View>
+      <View style={styles.suggestFormActions}>
+        <Button
+          title="Cancel"
+          variant="secondary"
+          size="sm"
+          onPress={onCancelSuggestEdit}
+        />
+        <Button
+          title="Submit suggestion"
+          loading={onSaveEdit.isPending}
+          onPress={() => {
+            if (suggestForm) {
+              onSuggestEdit(suggestingEdit!);
+            }
+          }}
+        />
+      </View>
+    </View>
+  ) : null}
+
+  <ScrollView
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
         showsVerticalScrollIndicator={false}
@@ -359,7 +553,28 @@ function ReviewCard({
           style={({ pressed }) => [styles.mapLink, pressed && { opacity: 0.6 }]}
         >
           <Ionicons name="map-outline" size={18} color={COLORS.primary} />
-        </Pressable>
+        </Pressable>          {isAdmin ? (
+          <Pressable
+            onPress={() => onEditBin(item.id)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Edit bin details"
+            style={({ pressed }) => [styles.mapLink, pressed && { opacity: 0.6 }]}
+          >
+            <Ionicons name="create-outline" size={18} color={COLORS.primary} />
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={() => onSuggestEdit(item.id)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Suggest edit for this bin"
+            style={({ pressed }) => [styles.mapLink, pressed && { opacity: 0.6 }]}
+          >
+            <Ionicons name="create-outline" size={18} color={COLORS.primary} />
+          </Pressable>
+        )}
+
       </View>
 
       {note ? (
@@ -538,4 +753,68 @@ const styles = StyleSheet.create({
   radioDot: { width: 9, height: 9, borderRadius: 5 },
   optionLabel: { fontSize: 13, fontWeight: '800', color: COLORS.text },
   optionHint: { fontSize: 11, color: COLORS.textMuted, marginTop: 1 },
+
+  // Edit form styles
+  editForm: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 20,
+    gap: 12,
+    ...SHADOW.sm,
+  },
+  editFormHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  editFormClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.surfaceAlt,
+  },
+  editFormTitle: { fontSize: 18, fontWeight: '800', color: COLORS.text },
+  editFormBody: { gap: 8 },
+  editFormActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+    marginTop: 12,
+  },
+  suggestForm: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 20,
+    gap: 12,
+    ...SHADOW.sm,
+  },
+  suggestFormHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  suggestFormClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.surfaceAlt,
+  },
+  suggestFormTitle: { fontSize: 18, fontWeight: '800', color: COLORS.text },
+  suggestFormBody: { gap: 8 },
+  suggestFormActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+    marginTop: 12,
+  },
 });

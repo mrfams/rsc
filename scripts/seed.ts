@@ -34,17 +34,18 @@ const STARTER_BINS: Array<{
   category: string;
   name: string;
   note: string;
+  binCount: number;
 }> = [
-  { lat: 35.14472, lng: 33.90788, category: 'plastic', name: 'Civil Engineering', note: 'Beside the main entrance' },
-  { lat: 35.14477, lng: 33.90783, category: 'glass', name: 'Civil Engineering', note: 'Same spot as the plastic bin' },
-  { lat: 35.14602, lng: 33.90928, category: 'paper', name: 'Faculty of Architecture', note: 'Studio entrance, by the stairs' },
-  { lat: 35.14678, lng: 33.90654, category: 'plastic', name: 'Technical Works', note: 'Service yard' },
-  { lat: 35.1409, lng: 33.909, category: 'general', name: 'Sports Complex', note: 'Track-side bins' },
-  { lat: 35.14302, lng: 33.91248, category: 'battery', name: 'Mechanical Engineering', note: 'Lobby corner' },
-  { lat: 35.1412, lng: 33.9098, category: 'metal', name: 'Özay Oral Library', note: 'Library forecourt' },
-  { lat: 35.14531, lng: 33.90512, category: 'food_waste', name: 'North Campus', note: 'Compost point behind the cafeteria' },
-  { lat: 35.14536, lng: 33.90517, category: 'paper', name: 'North Campus', note: 'Same composter pad' },
-  { lat: 35.14721, lng: 33.90802, category: 'plastic', name: "Rector's Office", note: 'Rectorate fountain side' },
+  { lat: 35.14472, lng: 33.90788, category: 'plastic', name: 'Civil Engineering', note: 'Beside the main entrance', binCount: 1 },
+  { lat: 35.14477, lng: 33.90783, category: 'glass', name: 'Civil Engineering', note: 'Same spot as the plastic bin', binCount: 1 },
+  { lat: 35.14602, lng: 33.90928, category: 'paper', name: 'Faculty of Architecture', note: 'Studio entrance, by the stairs', binCount: 1 },
+  { lat: 35.14678, lng: 33.90654, category: 'plastic', name: 'Technical Works', note: 'Service yard', binCount: 1 },
+  { lat: 35.1409, lng: 33.909, category: 'general', name: 'Sports Complex', note: 'Track-side bins', binCount: 1 },
+  { lat: 35.14302, lng: 33.91248, category: 'battery', name: 'Mechanical Engineering', note: 'Lobby corner', binCount: 1 },
+  { lat: 35.1412, lng: 33.9098, category: 'metal', name: 'Özay Oral Library', note: 'Library forecourt', binCount: 1 },
+  { lat: 35.14531, lng: 33.90512, category: 'food_waste', name: 'North Campus', note: 'Compost point behind the cafeteria', binCount: 1 },
+  { lat: 35.14536, lng: 33.90517, category: 'paper', name: 'North Campus', note: 'Same composter pad', binCount: 1 },
+  { lat: 35.14721, lng: 33.90802, category: 'plastic', name: "Rector's Office", note: 'Rectorate fountain side', binCount: 1 },
 ];
 
 async function ensurePasswordAccount(email: string, password: string, name: string) {
@@ -105,6 +106,7 @@ async function main() {
         category: b.category,
         name: b.name,
         note: b.note,
+        binCount: b.binCount,
       });
       // A second, independent member confirms the bin so the starter map looks
       // like a living community map instead of a wall of "awaiting review".
@@ -114,6 +116,7 @@ async function main() {
         category: b.category,
         name: b.name,
         note: 'Still here on a later visit',
+        binCount: b.binCount,
       });
       await db
         .update(bins)

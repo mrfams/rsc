@@ -79,6 +79,7 @@ export default function NewReportScreen() {
   const [locationName, setLocationName] = useState('');
   const [nameTouched, setNameTouched] = useState(false);
   const [note, setNote] = useState('');
+  const [binCount, setBinCount] = useState('1');
   const [pin, setPin] = useState<PickedPoint | null>(null);
   const [pinSource, setPinSource] = useState<PinSource | null>(null);
   const [photo, setPhoto] = useState<PickedPhoto | null>(null);
@@ -198,6 +199,12 @@ export default function NewReportScreen() {
       setNotice({ tone: 'error', text: 'Choose the bin type before publishing.' });
       return;
     }
+
+    if (binCount && Number(binCount) < 1) {
+      setNotice({ tone: 'error', text: 'Bin count must be at least 1.' });
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
+      return;
+    }
     if (!session?.user) {
       setNotice({ tone: 'info', text: 'Sign in to add this bin. Your draft stays here.' });
       router.push('/sign-in');
@@ -210,7 +217,8 @@ export default function NewReportScreen() {
       category,
       name: locationName.trim() ? locationName.trim() : undefined,
       note: note.trim() ? note.trim() : undefined,
-      photoBase64: photo?.base64,
+      binCount: Number(binCount),
+    // binCount is required (min 1) from the schema      photoBase64: photo?.base64,
     };
 
     setBusy(true);
@@ -575,6 +583,16 @@ export default function NewReportScreen() {
               )}
 
               <Field
+                label="Number of bins"
+                value={binCount}
+                onChangeText={setBinCount}
+                placeholder="e.g. 1"
+                hint="How many bins this sighting covers (must be at least 1)"
+                width={60}
+                // icon removed for cleaner look
+              />
+
+              <Field
                 label="Comment (optional)"
                 value={note}
                 onChangeText={setNote}
@@ -582,8 +600,21 @@ export default function NewReportScreen() {
                 hint="A short, useful detail helps the next person find it."
                 multiline
                 maxLength={500}
-                icon="create-outline"
+                // icon removed for cleaner look
               />
+
+              {/* Bin count */}
+              <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center', marginTop: 8 }}>
+                <Text style={styles.filterLabel}>Bins</Text>
+                <Field
+                  label="Number of bins"
+                  value={binCount ?? ''}
+                  onChangeText={(v) => setBinCount(v)}
+                  placeholder="e.g. 1"
+                  hint="How many bins this sighting covers"
+                  width={80}
+                />
+              </View>
 
               {notice ? (
                 <Notice tone={notice.tone} message={notice.text} onDismiss={() => setNotice(null)} />

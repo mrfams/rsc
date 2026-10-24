@@ -116,6 +116,23 @@ export const pushTokens = pgTable(
 );
 
 /**
+ * User-contributed edit suggestions for bins.
+ * Normal users submit these; admins review and verify/reject them.
+ */
+export const editSuggestions = pgTable('edit_suggestions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  binId: text('bin_id').notNull().references(() => bins.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull(),
+  userEmail: text('user_email').notNull(),
+  name: text('name'),
+  category: text('category'),
+  area: text('area'),
+  status: text('status').notNull().default('pending'), // pending, verified, rejected
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  verifiedAt: timestamp('verified_at', { withTimezone: true }),
+});
+
+/**
  * Kitchen-sink key/value store for server-editable settings.
  * Key `campus_polygon` holds the geofence polygon the admin can re-draw.
  */
