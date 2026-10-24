@@ -215,7 +215,7 @@ export default function ProfileScreen() {
             <LinkRow
               icon="stats-chart-outline"
               title="Campus stats"
-              subtitle="Leaderboard, bins and how points work"
+              subtitle=""
               onPress={() => router.push('/stats')}
             />
             <LinkRow
