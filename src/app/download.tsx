@@ -202,22 +202,6 @@ export default function DownloadScreen() {
 
         {/* ------------------------------ Updates ----------------------------- */}
         <Card style={styles.card}>
-          <View style={styles.cardHead}>
-            <View style={[styles.cardIcon, { backgroundColor: COLORS.successSoft }]}>
-              <Ionicons name="cloud-download-outline" size={20} color={COLORS.success} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.cardTitle}>Automatic updates</Text>
-              <Text style={styles.cardMeta}>No store, no re-download</Text>
-            </View>
-          </View>
-
-          <Text style={styles.body}>
-            Screen changes, copy fixes and new features are pushed straight to your phone — the
-            app tells you when a new version is ready and restarts into it. Only changes to the
-            native code (maps, camera, notifications) need a fresh install.
-          </Text>
-
           {message ? <Notice tone={tone} message={message} onDismiss={() => setMessage(null)} /> : null}
 
           <Button
