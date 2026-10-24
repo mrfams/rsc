@@ -225,7 +225,7 @@ export default function MapView({
           <Layer
             id="outside-mask-fill"
             type="fill"
-            paint={{ 'fill-color': '#101413', 'fill-opacity': 0.34 }}
+            paint={{ 'fill-color': '#101413', 'fill-opacity': 0.5 }}
           />
         </GeoJSONSource>
       ) : null}
@@ -235,7 +235,7 @@ export default function MapView({
           <Layer
             id="campus-boundary-fill"
             type="fill"
-            paint={{ 'fill-color': '#0E7C5A', 'fill-opacity': 0.07 }}
+            paint={{ 'fill-color': '#0E7C5A', 'fill-opacity': 0.3 }}
           />
           <Layer
             id="campus-boundary-line"
