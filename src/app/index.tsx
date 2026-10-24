@@ -404,7 +404,9 @@ export default function MapScreen() {
             active={categoryFilter === 'all'}
             onPress={() => setCategoryFilter('all')}
           />
-          {activeCategories.map((c) => (
+          {activeCategories
+    .filter((c) => counts.get(c.slug) > 0)
+    .map((c) => (
             <FilterChip
               key={c.slug}
               label={c.name}
