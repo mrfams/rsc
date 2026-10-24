@@ -64,14 +64,14 @@ function navItems(isAdmin: boolean, signedIn: boolean): NavItem[] {
   if (!signedIn) {
     return [
       { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },
+      { key: 'review', href: '/review', label: 'Review', icon: 'time-outline' },
       { key: 'stats', href: '/stats', label: 'Stats', icon: 'stats-chart-outline' },
+      { key: 'profile', href: '/profile', label: 'Profile', icon: 'person-circle-outline' },
     ];
   }
 
   const items: NavItem[] = [
     { key: 'map', href: '/', label: 'Map', icon: 'map-outline' },
-    // Everyone gets the same review experience; admins moderate separately
-    // from the Admin tab.
     { key: 'review', href: '/review', label: 'Review', icon: 'time-outline' },
     { key: 'stats', href: '/stats', label: 'Stats', icon: 'stats-chart-outline' },
     { key: 'profile', href: '/profile', label: 'Profile', icon: 'person-circle-outline' },
@@ -213,8 +213,7 @@ export function DesktopSidebar() {
           })}
         </View>
 
-        <LeaderboardCard compact />
-      </ScrollView>
+        </ScrollView>
 
       <View style={styles.railFooter}>
         <Pressable
