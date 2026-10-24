@@ -370,22 +370,28 @@ export async function createReport(
  * lifecycle status. A fresh independent sighting also clears a dispute.
  */
 async function refreshBinStatusFromWave(binId: string, userId?: string): Promise<BinStatus> {
-  const [row] = await db
-    .select({ n: sql<number>`count(distinct ${reports.userId})` })
-    .from(reports)
-    .where(eq(reports.binId, binId));
-  const contributors = Number(row?.n ?? 0);
-  // Admins can verify with just 1 contributor, normal users need 2
-  let minContributors = MIN_VERIFY_CONTRIBUTORS; // default: 2
+  // Admins skip contributor check entirely - their posts are auto-verified
   if (userId) {
     const [u] = await db
       .select({ role: user.role })
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
-    if (u?.role === 'admin') minContributors = 1;
+    if (u?.role === 'admin') {
+      await db
+        .update(bins)
+        .set({ status: 'verified', updatedAt: new Date() })
+        .where(eq(bins.id, binId));
+      return 'verified';
+    }
   }
-  const status: BinStatus = contributors >= minContributors ? 'verified' : 'pending';
+  const [row] = await db
+    .select({ n: sql<number>`count(distinct ${reports.userId})` })
+    .from(reports)
+    .where(eq(reports.binId, binId));
+  const contributors = Number(row?.n ?? 0);
+  // Normal users need 2 contributors to verify
+  const status: BinStatus = contributors >= MIN_VERIFY_CONTRIBUTORS ? 'verified' : 'pending';
   await db
     .update(bins)
     .set({ status, updatedAt: new Date() })
