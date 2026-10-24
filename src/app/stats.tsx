@@ -241,7 +241,6 @@ export default function StatsScreen() {
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <PageHeader
         title="Stats"
-        subtitle="The campus leaderboard, the bins we know about and how points work."
         right={
           <Button
             title="Refresh"
