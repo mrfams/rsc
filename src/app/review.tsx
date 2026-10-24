@@ -438,8 +438,8 @@ const styles = StyleSheet.create({
   scroll: { padding: 20, paddingBottom: 120 },
   layout: { width: '100%', maxWidth: 820, alignSelf: 'center', gap: 14 },
 
-  summaryGrid: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
-  summaryCard: { flex: 1, minWidth: 160, gap: 2 },
+  summaryGrid: { flexDirection: 'row', gap: 12, alignItems: 'center', flex: 1 },
+  summaryCard: { flex: 1, minWidth: 0, gap: 2, flexBasis: 0 },
   summaryIcon: {
     width: 36,
     height: 36,
