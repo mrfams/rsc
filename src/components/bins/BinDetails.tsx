@@ -42,6 +42,7 @@ type BinDetail = {
   id: string;
   category: string;
   name: string | null;
+  placeName: string | null;
   lat: number;
   lng: number;
   area: string | null;
@@ -552,6 +553,11 @@ export function BinDetails({
           <Stat label="Added" value={timeAgo(bin.createdAt)} icon="calendar-outline" />
         </View>
 
+        <View style={styles.placeStatsRow}>
+          <Stat label="Place" value={bin.placeName || 'Unnamed location'} icon="map" />
+          <Stat label="Bins at place" value={String(bin.reportCount)} icon="grid" />
+        </View>
+
         {isAdmin ? (
           <View style={styles.adminCard}>
             <View style={styles.adminHeader}>
@@ -846,6 +852,7 @@ const styles = StyleSheet.create({
   },
   missingLinkText: { fontSize: 12.5, fontWeight: '700', color: COLORS.danger },
   statsRow: { flexDirection: 'row', gap: 8 },
+  placeStatsRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
   stat: {
     flex: 1,
     backgroundColor: COLORS.surfaceAlt,

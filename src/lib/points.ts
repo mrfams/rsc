@@ -9,17 +9,20 @@
  */
 export const POINT_RULES = {
   /** A report that created a bin nobody had mapped yet. */
-  newBin: 20,
+  newBin: 10,
   /** A sighting on a bin that already existed (confirmation / review). */
   confirmation: 5,
   /** Extra for attaching a photo to a sighting. */
-  photo: 3,
+  photo: 5,
+  /** For updating an existing bin's info or status. */
+  binUpdate: 3,
 } as const;
 
 export type PointBreakdown = {
   newBins: number;
   confirmations: number;
   photos: number;
+  binUpdates: number;
 };
 
 export type LeaderboardRow = {

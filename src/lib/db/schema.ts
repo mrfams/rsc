@@ -54,6 +54,8 @@ export const bins = pgTable(
     category: text('category').notNull().references((): AnyPgColumn => categories.slug),
     /** Human place name, e.g. "DAU 3 Dormitory" or "Outside the library". */
     name: text('name'),
+    /** Campus place name, e.g. "Faculty of Civil Engineering", "Central Cafeteria". */
+    placeName: text('place_name'),
     lat: doublePrecision('lat').notNull(),
     lng: doublePrecision('lng').notNull(),
     area: text('area'),

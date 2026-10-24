@@ -246,28 +246,27 @@ export default function MapScreen() {
     [bins, config, activeSlugs],
   );
 
-  const campusBins = useMemo(
-    () => activeBins.filter((bin) => binIsOnCampus(bin, campus, campusPolygons)),
-    [activeBins, campus, campusPolygons],
-  );
+  // Show ALL bins - campus selection only moves map viewport
+  const campusBins = useMemo(() => activeBins, [activeBins]);
 
+  // Count bins on campus (for info only, not used for filtering)
   const campusCounts = useMemo(
     () => ({
-      main: activeBins.filter((bin) => binIsOnCampus(bin, 'main', campusPolygons)).length,
-      south: activeBins.filter((bin) => binIsOnCampus(bin, 'south', campusPolygons)).length,
+      main: activeBins.filter((bin) => isInsideCampus(bin.lat, bin.lng, campusPolygons?.[0] ?? [])).length,
+      south: activeBins.filter((bin) => isInsideCampus(bin.lat, bin.lng, campusPolygons?.[1] ?? [])).length,
     }),
     [activeBins, campusPolygons],
   );
 
   const counts = useMemo(() => {
     const map = new Map<string, number>();
-    for (const bin of campusBins) map.set(bin.category, (map.get(bin.category) ?? 0) + 1);
+    for (const bin of activeBins) map.set(bin.category, (map.get(bin.category) ?? 0) + 1);
     return map;
-  }, [campusBins]);
+  }, [activeBins]);
 
   const visibleBins = useMemo(
-    () => campusBins.filter((bin) => categoryFilter === 'all' || bin.category === categoryFilter),
-    [campusBins, categoryFilter],
+    () => activeBins.filter((bin) => categoryFilter === 'all' || bin.category === categoryFilter),
+    [activeBins, categoryFilter],
   );
 
   const markers: MapMarker[] = visibleBins.map((bin) => ({

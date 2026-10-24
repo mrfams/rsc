@@ -22,10 +22,9 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://emu-bin-tracker.vercel.app",
-        "EXPO_PUBLIC_ANDROID_DOWNLOAD_URL": "https://github.com/mrfams/rsc/releases/latest/download/app.apk"
+        "EXPO_PUBLIC_API_URL": "https://emu-bin-tracker.vercel.app","EXPO_PUBLIC_ANDROID_DOWNLOAD_URL": "https://github.com/mrfams/rsc/releases/download/apk-1.0.0-3/app.apk"
       },
-      "channel": "preview"
+    "channel": "preview"
     },
     "production": {
       "autoIncrement": true,
@@ -36,7 +35,7 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://emu-bin-tracker.vercel.app",
-        "EXPO_PUBLIC_ANDROID_DOWNLOAD_URL": "https://github.com/mrfams/rsc/releases/latest/download/app.apk"
+        "EXPO_PUBLIC_ANDROID_DOWNLOAD_URL": "https://github.com/mrfams/rsc/releases/download/apk-1.0.0-3/app.apk"
       },
       "channel": "production"
     }

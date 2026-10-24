@@ -27,6 +27,7 @@ export type BinDto = {
   category: BinCategory;
   /** Human place name, e.g. "DAU 3 Dormitory". */
   name: string | null;
+  placeName: string | null;
   lat: number;
   lng: number;
   area: string | null;
@@ -81,6 +82,7 @@ function mapBin(row: {
   id: string;
   category: BinCategory;
   name: string | null;
+  placeName: string | null;
   lat: number;
   lng: number;
   area: string | null;
@@ -119,12 +121,11 @@ function mapReport(report: {
     photoUrl: photoToUrl(report.photoPath),
     createdAt: report.createdAt.toISOString(),
   };
-}
-
-const sqlBins = {
+}const sqlBins = {
   id: bins.id,
   category: bins.category,
   name: bins.name,
+  placeName: bins.placeName,
   lat: bins.lat,
   lng: bins.lng,
   area: bins.area,
@@ -133,7 +134,6 @@ const sqlBins = {
   createdAt: bins.createdAt,
   updatedAt: bins.updatedAt,
 };
-
 /**
  * Public map data. Every non-removed bin is listed, including bins placed
  * outside the campus outline: the geofence is a visual reference, never a
@@ -142,6 +142,7 @@ const sqlBins = {
 export async function listBins(): Promise<BinDto[]> {
   const rows = await db
     .select(sqlBins)
+
     .from(bins)
     .where(sql`${bins.status} <> 'removed'`)
     .orderBy(desc(bins.createdAt));
@@ -271,6 +272,7 @@ export async function createReport(
         .values({
           category: input.category,
           name: suggestedName,
+          placeName: suggestedName,
           lat: input.lat,
           lng: input.lng,
         })
@@ -510,6 +512,7 @@ export async function createBinByAdmin(
     .values({
       name: input.name.trim() || null,
       category: input.category,
+      placeName: input.name.trim() || placeNameFor({ latitude: input.lat, longitude: input.lng }) || null,
       lat: input.lat,
       lng: input.lng,
       status: input.status ?? 'verified',
@@ -558,6 +561,7 @@ export async function updateBinDetails(
     lat?: number;
     lng?: number;
     status?: BinStatus;
+    placeName?: string | null;
     updatedAt: Date;
   } = { updatedAt: new Date() };
   if (input.name !== undefined) patch.name = input.name?.trim() || null;
@@ -565,6 +569,9 @@ export async function updateBinDetails(
   if (input.lat !== undefined) patch.lat = input.lat;
   if (input.lng !== undefined) patch.lng = input.lng;
   if (input.status !== undefined) patch.status = input.status;
+  if (input.name !== undefined || input.lat !== undefined || input.lng !== undefined) {
+    patch.placeName = input.name?.trim() || placeNameFor({ latitude: input.lat ?? 0, longitude: input.lng ?? 0 }) || null;
+  }
 
   const updated = await db.update(bins).set(patch).where(eq(bins.id, binId)).returning(sqlBins);
   return updated[0] ? mapBin(updated[0]) : null;
@@ -637,6 +644,7 @@ type ContributionEntry = {
   newBins: number;
   confirmations: number;
   photos: number;
+  binUpdates: number;
   points: number;
   rank: number;
 };
@@ -728,6 +736,7 @@ async function computeLeaderboard(excludeReportId?: string): Promise<Contributio
       newBins: agg.newBins,
       confirmations,
       photos: agg.photos,
+      binUpdates: 0,
       points:
         agg.newBins * POINT_RULES.newBin +
         confirmations * POINT_RULES.confirmation +
@@ -838,6 +847,7 @@ export async function getUserStats(userId: string): Promise<ContributionStats> {
       newBins: mineAll?.newBins ?? 0,
       confirmations: mineAll?.confirmations ?? 0,
       photos: mineAll?.photos ?? 0,
+      binUpdates: 0,
     },
     leaderboard: leaderboardRows(publicEntries, userId),
   };
