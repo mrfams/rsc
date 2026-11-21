@@ -41,6 +41,20 @@ export function categoryEmoji(slug: string): string {
   return BIN_CATEGORY_EMOJI[slug] ?? DEFAULT_CATEGORY_EMOJI;
 }
 
+export const binIssueTypeSchema = z.enum(['traffic', 'smell', 'hygiene', 'other']);
+export type BinIssueType = z.infer<typeof binIssueTypeSchema>;
+
+export const binIssueSchema = z
+  .object({
+    type: binIssueTypeSchema,
+    message: z.string().max(500).optional(),
+  })
+  .refine(
+    (value) => value.type !== 'other' || Boolean(value.message?.trim()),
+    { message: 'Describe the issue', path: ['message'] },
+  );
+export type BinIssueInput = z.infer<typeof binIssueSchema>;
+
 export const binStatusSchema = z.enum(binStatusEnum.enumValues);
 
 export const adminBinCreateSchema = z.object({

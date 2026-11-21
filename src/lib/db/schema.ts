@@ -142,8 +142,37 @@ export const appConfig = pgTable('app_config', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Community-reported problems with a bin: traffic, foul smell, hygiene, or
+ * a free-form "other" description. Stored per bin so admins can review them.
+ */
+export const binIssues = pgTable(
+  'bin_issues',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    binId: uuid('bin_id')
+      .notNull()
+      .references(() => bins.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    userEmail: text('user_email').notNull(),
+    /** One of: traffic, smell, hygiene, other. */
+    type: text('type').notNull(),
+    /** Free-form detail, required when type === 'other'. */
+    message: text('message'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('bin_issues_bin_idx').on(table.binId),
+    index('bin_issues_user_idx').on(table.userId),
+    index('bin_issues_created_idx').on(table.createdAt),
+  ],
+);
+
 export type Bin = typeof bins.$inferSelect;
 export type Report = typeof reports.$inferSelect;
+export type BinIssue = typeof binIssues.$inferSelect;
 export type PushToken = typeof pushTokens.$inferSelect;
 /** Category is always a category slug (validated against the DB on write). */
 export type BinCategory = string;

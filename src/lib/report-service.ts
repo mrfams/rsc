@@ -7,11 +7,11 @@ import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { haversine, placeNameFor } from '@/lib/geo';
 import { isReportableCategory } from '@/lib/categories';
-import { bins, reports, user, type BinCategory, type BinStatus } from '@/lib/db/schema';
+import { binIssues, bins, reports, user, type BinCategory, type BinStatus } from '@/lib/db/schema';
 import { POINT_RULES, type ContributionStats, type PublicLeaderboard } from '@/lib/points';
 import { deletePhoto, storePhoto } from '@/lib/photo-storage';
 import { sendToUsers } from '@/lib/push';
-import type { ReportInput } from '@/lib/validation';
+import type { BinIssueInput, ReportInput } from '@/lib/validation';
 
 /** Two reports within this distance become the same bin. */
 export const BIN_LINK_RADIUS_M = 25;
@@ -56,6 +56,16 @@ export type BinDetailDto = BinDto & {
   reports: ReportDto[];
   /** True when the signed-in viewer already sighted this bin. */
   hasSighted?: boolean;
+};
+
+export type BinIssueDto = {
+  id: string;
+  binId: string;
+  userId: string;
+  userEmail: string;
+  type: string;
+  message: string | null;
+  createdAt: string;
 };
 
 /** One actionable card in the community review queue. */
@@ -478,6 +488,51 @@ export async function disputeBin(binId: string): Promise<BinDto | null> {
     return mapBin(updated[0]);
   }
   return null;
+}
+
+function mapBinIssue(row: {
+  id: string;
+  binId: string;
+  userId: string;
+  userEmail: string;
+  type: string;
+  message: string | null;
+  createdAt: Date;
+}): BinIssueDto {
+  return {
+    id: row.id,
+    binId: row.binId,
+    userId: row.userId,
+    userEmail: row.userEmail,
+    type: row.type,
+    message: row.message,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/** A member reports an issue with a bin (traffic, smell, hygiene, or other). */
+export async function createBinIssue(
+  user: { id: string; email: string },
+  binId: string,
+  input: BinIssueInput,
+): Promise<BinIssueDto> {
+  const [bin] = await db.select({ id: bins.id }).from(bins).where(eq(bins.id, binId)).limit(1);
+  if (!bin) throw new Response('Bin not found', { status: 404 });
+
+  const inserted = (
+    await db
+      .insert(binIssues)
+      .values({
+        binId,
+        userId: user.id,
+        userEmail: user.email,
+        type: input.type,
+        message: input.type === 'other' ? (input.message?.trim() ?? null) : (input.message?.trim() || null),
+      })
+      .returning()
+  )[0];
+
+  return mapBinIssue(inserted);
 }
 
 /** Moderation: force any lifecycle status. Admin-only routes call this. */

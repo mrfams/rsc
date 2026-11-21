@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 
 import { Button } from '@/components/ui/Button';
+import { Field } from '@/components/ui/Field';
 import { useFeedback } from '@/components/ui/Feedback';
 import { Notice } from '@/components/ui/Notice';
 import { api } from '@/lib/api-client';
@@ -83,6 +84,9 @@ export function BinDetails({
   const [notice, setNotice] = useState<{ tone: 'error' | 'success' | 'info'; text: string } | null>(
     null,
   );
+  const [issueOpen, setIssueOpen] = useState(false);
+  const [issueType, setIssueType] = useState<'traffic' | 'smell' | 'hygiene' | 'other' | null>(null);
+  const [issueMessage, setIssueMessage] = useState('');
 
   const { data: bin, isLoading, error } = useQuery({
     queryKey: ['bin', binId],
@@ -240,6 +244,40 @@ export function BinDetails({
     },
     onError: (err) => setNotice({ tone: 'error', text: err.message }),
   });
+
+  const reportIssue = useMutation({
+    mutationFn: (input: { type: string; message?: string }) =>
+      api(`/api/bins/${binId}/issues`, { method: 'POST', json: input }),
+    onSuccess: () => {
+      setIssueOpen(false);
+      setIssueType(null);
+      setIssueMessage('');
+      toast({
+        tone: 'success',
+        title: 'Issue reported',
+        message: 'Thanks — moderators will review it.',
+      });
+    },
+    onError: (err) => {
+      const status = (err as { status?: number }).status;
+      if (status === 401) {
+        setNotice({ tone: 'info', text: 'Sign in to report an issue.' });
+        router.push('/sign-in');
+        return;
+      }
+      setNotice({ tone: 'error', text: err.message });
+    },
+  });
+
+  function openIssue() {
+    if (!signedIn) {
+      setNotice({ tone: 'info', text: 'Sign in to report an issue.' });
+      router.push('/sign-in');
+      return;
+    }
+    setIssueOpen((v) => !v);
+    setNotice(null);
+  }
 
   if (isLoading) {
     return (
@@ -548,6 +586,86 @@ export function BinDetails({
           </Pressable>
         ) : null}
 
+        <View style={styles.issueWrap}>
+          <Pressable
+            onPress={openIssue}
+            accessibilityRole="button"
+            accessibilityLabel="Report an issue with this bin"
+            style={({ pressed }) => [styles.issueButton, pressed && { opacity: 0.7 }]}
+          >
+            <Ionicons name="warning-outline" size={15} color={COLORS.warning} />
+            <Text style={styles.issueButtonText}>Report an issue</Text>
+            <Ionicons
+              name={issueOpen ? 'chevron-up' : 'chevron-down'}
+              size={15}
+              color={COLORS.textMuted}
+            />
+          </Pressable>
+
+          {issueOpen ? (
+            <View style={styles.issueCard}>
+              <Text style={styles.issueTitle}>What’s wrong with this bin?</Text>
+              <View style={styles.issueChips}>
+                {(
+                  [
+                    { value: 'traffic', label: 'Causes traffic' },
+                    { value: 'smell', label: 'Foul smell' },
+                    { value: 'hygiene', label: 'Unhygienic' },
+                    { value: 'other', label: 'Other' },
+                  ] as const
+                ).map((opt) => {
+                  const active = issueType === opt.value;
+                  return (
+                    <Pressable
+                      key={opt.value}
+                      onPress={() => setIssueType(opt.value)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      style={[styles.issueChip, active && styles.issueChipActive]}
+                    >
+                      <Text style={[styles.issueChipText, active && styles.issueChipTextActive]}>
+                        {opt.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              {issueType === 'other' ? (
+                <Field
+                  label="Describe the issue"
+                  value={issueMessage}
+                  onChangeText={setIssueMessage}
+                  placeholder="e.g. bin is overflowing, lid broken…"
+                  multiline
+                  maxLength={500}
+                />
+              ) : null}
+
+              {issueType ? (
+                <Button
+                  title={reportIssue.isPending ? 'Submitting…' : 'Submit issue'}
+                  icon="paper-plane-outline"
+                  loading={reportIssue.isPending}
+                  disabled={reportIssue.isPending}
+                  onPress={() => {
+                    if (issueType === 'other' && !issueMessage.trim()) {
+                      setNotice({ tone: 'error', text: 'Describe the issue before submitting.' });
+                      return;
+                    }
+                    reportIssue.mutate({
+                      type: issueType,
+                      message: issueType === 'other' ? issueMessage.trim() : undefined,
+                    });
+                  }}
+                />
+              ) : (
+                <Text style={styles.issueHint}>Pick an option above to continue.</Text>
+              )}
+            </View>
+          ) : null}
+        </View>
+
         <View style={styles.statsRow}>
           <Stat label="Sightings" value={String(bin.reportCount)} icon="eye-outline" />
           <Stat label="Added" value={timeAgo(bin.createdAt)} icon="calendar-outline" />
@@ -851,6 +969,42 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   missingLinkText: { fontSize: 12.5, fontWeight: '700', color: COLORS.danger },
+  issueWrap: { gap: 8 },
+  issueButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: COLORS.warningSoft,
+    borderWidth: 1,
+    borderColor: COLORS.warning,
+  },
+  issueButtonText: { fontSize: 12.5, fontWeight: '700', color: COLORS.warning },
+  issueCard: {
+    backgroundColor: COLORS.surfaceAlt,
+    borderRadius: RADIUS.md,
+    padding: 12,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  issueTitle: { fontSize: 13, fontWeight: '800', color: COLORS.text },
+  issueChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  issueChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  issueChipActive: { backgroundColor: COLORS.warning, borderColor: COLORS.warning },
+  issueChipText: { fontSize: 12, fontWeight: '700', color: COLORS.text },
+  issueChipTextActive: { color: '#FFFFFF' },
+  issueHint: { fontSize: 12, color: COLORS.textMuted, fontStyle: 'italic' },
   statsRow: { flexDirection: 'row', gap: 8 },
   placeStatsRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
   stat: {
