@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { Redirect, useRouter } from 'expo-router';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -22,7 +22,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Segmented } from '@/components/ui/Segmented';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { api } from '@/lib/api-client';
-import { useSession, useMe } from '@/lib/auth-client';
+import { useSession } from '@/lib/auth-client';
+import { useMe } from '@/lib/use-me';
 import { CATEGORY_COLORS, COLORS } from '@/lib/constants';
 import { displayNote } from '@/lib/notes';
 import type { ReviewItemDto, BinDto } from '@/lib/report-service';
@@ -61,7 +62,28 @@ export default function ReviewScreen() {
   const [busyId, setBusyId] = useState<string | null>(null);
   /** Bins handled in this session stay out of the list until a refetch. */
   const [handled, setHandled] = useState<Set<string>>(new Set());
-  const [adminNotice, setAdminNotice] = useState<NoticeState>(null);
+  const [editingBinId, setEditingBinId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<{ name: string; category: string; area: string } | null>(null);
+  const [suggestingEdit, setSuggestingEdit] = useState<string | null>(null);
+  const [suggestForm, setSuggestForm] = useState<{ name: string; category: string; area: string } | null>(null);
+
+  const onSaveEdit = useMutation({
+    mutationFn: ({ binId, name, category, area }: { binId: string; name: string; category: string; area: string }) =>
+      api(`/api/admin/bins/${binId}`, { method: 'PATCH', json: { name, category, area } }),
+    onSuccess: () => {
+      setEditingBinId(null);
+      setEditForm(null);
+      toast({
+        tone: 'success',
+        title: 'Bin updated',
+        message: 'The bin details have been updated for everyone.',
+      });
+      queryClient.invalidateQueries({ queryKey: ['review-queue'] });
+      queryClient.invalidateQueries({ queryKey: ['bins'] });
+    },
+    onError: (err) =>
+      toast({ tone: 'error', title: 'Could not save', message: err instanceof Error ? err.message : 'Please try again.' }),
+  });
 
   const review = useQuery({
     queryKey: ['review-queue'],
@@ -71,7 +93,7 @@ export default function ReviewScreen() {
 
   // Check if current user is admin
   const { data: me, isLoading: meLoading } = useMe();
-  const isAdmin = me?.role === 'admin';
+  const isAdmin = me?.isAdmin === true;
 
   const { data: config } = useQuery({
     queryKey: ['config'],
@@ -79,8 +101,6 @@ export default function ReviewScreen() {
     staleTime: 60_000,
   });
 
-  // Notice for edit operations
-  const { data: notice, isLoading: noticeLoading } = useFeedback();
 
   if (isPending) {
     return (
@@ -113,13 +133,6 @@ export default function ReviewScreen() {
       emoji: categoryEmoji(slug),
     };
 
-  // Track if we're showing the edit form for a specific bin
-  const [editingBinId, setEditingBinId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<{ name: string; category: string; area: string } | null>(null);
-
-  // Track if we're showing the suggest edit form for a specific bin
-  const [suggestingEdit, setSuggestingEdit] = useState<string | null>(null);
-  const [suggestForm, setSuggestForm] = useState<{ name: string; category: string; area: string } | null>(null);
 
   const queue = (review.data?.items ?? [])
     .filter((item) => !handled.has(item.id))
@@ -202,17 +215,6 @@ export default function ReviewScreen() {
     }
   }
 
-  // Handle bin tap - shows options based on user role
-  const onBinTap = async (binId: string) => {
-    if (isAdmin) {
-      // Admin: directly edit the bin
-      onEditBin(binId);
-    } else {
-      // Normal user: suggest edit for admin review
-      onSuggestEdit(binId);
-    }
-  };
-
   // Admin: edit a bin from the review screen
   const onEditBin = async (binId: string) => {
     if (!isAdmin) return;
@@ -232,7 +234,7 @@ export default function ReviewScreen() {
     // Fetch the bin details to get the current values for the suggestion
     const bin = (await (await fetch(`/api/admin/bins/${binId}`)).json()) as BinDto;
     if (!bin) return;
-    const suggestion = await api(`/api/admin/bins/${binId}/suggest-edit`, {
+    await api(`/api/admin/bins/${binId}/suggest-edit`, {
       method: 'POST',
       json: { name: bin.name ?? '', category: bin.category, area: bin.area ?? '' },
     });
@@ -243,23 +245,6 @@ export default function ReviewScreen() {
     });
   };
 
-  // Save edited bin
-  const onSaveEdit = useMutation({
-    mutationFn: ({ binId, name, category, area }: { binId: string; name: string; category: string; area: string }) =>
-      api(`/api/admin/bins/${binId}`, { method: 'PATCH', json: { name, category, area } }),
-    onSuccess: (_data, vars) => {
-      setEditingBinId(null);
-      setEditForm(null);
-      toast({
-        tone: 'success',
-        title: 'Bin updated',
-        message: 'The bin details have been updated for everyone.',
-      });
-      queryClient.invalidateQueries({ queryKey: ['review-queue'] });
-      queryClient.invalidateQueries({ queryKey: ['bins'] });
-    },
-    onError: (err) => setNotice({ tone: 'error', text: err.message }),
-  });
 
   // Cancel edit
   const onCancelEdit = () => {
@@ -282,28 +267,28 @@ export default function ReviewScreen() {
   {editingBinId ? (
     <View style={styles.editForm}>
       <View style={styles.editFormHeader}>
-        <View style={styles.editFormClose} onPress={onCancelEdit}>
+        <Pressable style={styles.editFormClose} onPress={onCancelEdit}>
           <Ionicons name="close" size={20} color={COLORS.text} />
-        </View>
+        </Pressable>
         <Text style={styles.editFormTitle}>Edit bin details</Text>
       </View>
       <View style={styles.editFormBody}>
         <Field
           label="Name"
           value={editForm?.name ?? ''}
-          onChangeText={(v) => setEditForm({ ...editForm, name: v })}
+          onChangeText={(v) => setEditForm((prev) => ({ name: v, category: prev?.category ?? '', area: prev?.area ?? '' }))}
           placeholder="e.g. DAU 3 Dormitory"
         />
         <Field
           label="Category"
           value={editForm?.category ?? ''}
-          onChangeText={(v) => setEditForm({ ...editForm, category: v })}
+          onChangeText={(v) => setEditForm((prev) => ({ name: prev?.name ?? '', category: v, area: prev?.area ?? '' }))}
           placeholder="e.g. plastic"
         />
         <Field
           label="Area / location description"
           value={editForm?.area ?? ''}
-          onChangeText={(v) => setEditForm({ ...editForm, area: v })}
+          onChangeText={(v) => setEditForm((prev) => ({ name: prev?.name ?? '', category: prev?.category ?? '', area: v }))}
           placeholder="e.g. near the main entrance"
         />
       </View>
@@ -334,28 +319,28 @@ export default function ReviewScreen() {
   {suggestingEdit ? (
     <View style={styles.suggestForm}>
       <View style={styles.suggestFormHeader}>
-        <View style={styles.suggestFormClose} onPress={onCancelSuggestEdit}>
+        <Pressable style={styles.suggestFormClose} onPress={onCancelSuggestEdit}>
           <Ionicons name="close" size={20} color={COLORS.text} />
-        </View>
+        </Pressable>
         <Text style={styles.suggestFormTitle}>Suggest bin edit</Text>
       </View>
       <View style={styles.suggestFormBody}>
         <Field
           label="Name"
           value={suggestForm?.name ?? ''}
-          onChangeText={(v) => setSuggestForm({ ...suggestForm, name: v })}
+          onChangeText={(v) => setSuggestForm((prev) => ({ name: v, category: prev?.category ?? '', area: prev?.area ?? '' }))}
           placeholder="e.g. DAU 3 Dormitory"
         />
         <Field
           label="Category"
           value={suggestForm?.category ?? ''}
-          onChangeText={(v) => setSuggestForm({ ...suggestForm, category: v })}
+          onChangeText={(v) => setSuggestForm((prev) => ({ name: prev?.name ?? '', category: v, area: prev?.area ?? '' }))}
           placeholder="e.g. plastic"
         />
         <Field
           label="Area / location description"
           value={suggestForm?.area ?? ''}
-          onChangeText={(v) => setSuggestForm({ ...suggestForm, area: v })}
+          onChangeText={(v) => setSuggestForm((prev) => ({ name: prev?.name ?? '', category: prev?.category ?? '', area: v }))}
           placeholder="e.g. near the main entrance"
         />
       </View>
@@ -459,6 +444,9 @@ export default function ReviewScreen() {
                   category={categoryOf(item.category)}
                   busy={busyId === item.id}
                   disabled={busyId !== null && busyId !== item.id}
+                  isAdmin={isAdmin}
+                  onEditBin={onEditBin}
+                  onSuggestEdit={onSuggestEdit}
                   onOpenMap={() =>
                     router.navigate({ pathname: '/', params: { bin: item.id } })
                   }
@@ -500,6 +488,9 @@ function ReviewCard({
   category,
   busy,
   disabled,
+  isAdmin,
+  onEditBin,
+  onSuggestEdit,
   onOpenMap,
   onDecide,
 }: {
@@ -507,6 +498,9 @@ function ReviewCard({
   category: CategoryMeta;
   busy: boolean;
   disabled: boolean;
+  isAdmin: boolean;
+  onEditBin: (binId: string) => void | Promise<void>;
+  onSuggestEdit: (binId: string) => void | Promise<void>;
   onOpenMap: () => void;
   onDecide: (choice: Choice) => void;
 }) {
